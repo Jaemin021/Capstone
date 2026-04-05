@@ -1,0 +1,24 @@
+{
+  "survey_id": "MIXED_01",
+  "title": "서비스 평가 조사 (혼합)",
+  "items": [
+    {
+      "item_id": "Q1",
+      "question": "전반적으로 서비스에 얼마나 만족하십니까?",
+      "option_type": "single_choice",
+      "options": ["전혀 아니다", "아니다", "보통이다", "그렇다", "매우 그렇다"]
+    },
+    {
+      "item_id": "Q2",
+      "question": "서비스가 매우 훌륭하다고 생각하지 않으십니까?",
+      "option_type": "single_choice",
+      "options": ["전혀 아니다", "아니다", "보통이다", "그렇다", "매우 그렇다"]
+    },
+    {
+      "item_id": "Q3",
+      "question": "서비스의 속도와 안정성에 대해 어떻게 평가하십니까?",
+      "option_type": "single_choice",
+      "options": ["매우 나쁨", "나쁨", "보통", "좋음", "매우 좋음"]
+    }
+  ]
+}

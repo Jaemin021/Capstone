@@ -1,0 +1,453 @@
+{
+  "survey_id": "MIXED_01",
+  "title": "서비스 평가 조사 (혼합)",
+  "item_count": 3,
+  "summary": {
+    "avg_overall_pre_score": 9.09,
+    "avg_overall_pre_score_100": 90.9,
+    "avg_final_scores": {
+      "clarity": 9.3,
+      "single_concept": 8.57,
+      "answerability": 9.4
+    },
+    "avg_auxiliary_llm_scores": {
+      "neutrality": 7.33
+    }
+  },
+  "items": [
+    {
+      "item_id": "Q1",
+      "question": "전반적으로 서비스에 얼마나 만족하십니까?",
+      "option_type": "single_choice",
+      "options": [
+        "전혀 아니다",
+        "아니다",
+        "보통이다",
+        "그렇다",
+        "매우 그렇다"
+      ],
+      "rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": []
+      },
+      "feature_counts": {
+        "clarity": {
+          "vague_degree": 0,
+          "vague_frequency": 0,
+          "subjective_evaluation": 0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0
+        },
+        "answerability": {
+          "broad_recall": 0,
+          "absolute_expression": 0,
+          "excessive_precision": 0
+        },
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 0
+        }
+      },
+      "penalty_details": {
+        "clarity": {
+          "vague_degree": 0.0,
+          "vague_frequency": 0.0,
+          "subjective_evaluation": 0.0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0.0
+        },
+        "answerability": {
+          "broad_recall": 0.0,
+          "absolute_expression": 0.0,
+          "excessive_precision": 0.0
+        }
+      },
+      "raw_penalties": {
+        "clarity": 0.0,
+        "single_concept": 0.0,
+        "answerability": 0.0
+      },
+      "rule_scores": {
+        "clarity": 10.0,
+        "single_concept": 10.0,
+        "answerability": 10.0
+      },
+      "llm_scores": {
+        "clarity": {
+          "score": 9.0,
+          "reason": "짧고 직접적이며 ‘전반적으로 서비스에 얼마나 만족하십니까?’의 의미가 분명합니다."
+        },
+        "single_concept": {
+          "score": 10.0,
+          "reason": "만족도만 묻는 단일 개념 문항입니다."
+        },
+        "answerability": {
+          "score": 9.0,
+          "reason": "일반적인 서비스 경험을 바탕으로 쉽게 응답할 수 있습니다."
+        }
+      },
+      "final_scores": {
+        "clarity": 9.7,
+        "single_concept": 10.0,
+        "answerability": 9.7
+      },
+      "overall_pre_score": 9.8,
+      "overall_pre_score_100": 98.0,
+      "primary_issue_count": 0,
+      "auxiliary_issue_count": 0,
+      "issue_count": 0,
+      "has_issue": false,
+      "suggestion": {
+        "needed": false,
+        "recommended_question": null,
+        "reason": null
+      },
+      "exact_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": []
+      },
+      "assist_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": []
+      },
+      "auxiliary_rule_analysis": {
+        "neutrality": []
+      },
+      "auxiliary_feature_counts": {
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 0
+        }
+      },
+      "auxiliary_penalty_details": {
+        "neutrality": {
+          "leading_assertion": 0.0,
+          "positive_bias": 0.0
+        }
+      },
+      "auxiliary_raw_penalties": {
+        "neutrality": 0.0
+      },
+      "auxiliary_rule_scores": {
+        "neutrality": 10.0
+      },
+      "auxiliary_llm_scores": {
+        "neutrality": {
+          "score": 9.0,
+          "reason": "특정 방향으로 유도하는 표현 없이 중립적으로 만족도를 묻습니다."
+        }
+      }
+    },
+    {
+      "item_id": "Q2",
+      "question": "서비스가 매우 훌륭하다고 생각하지 않으십니까?",
+      "option_type": "single_choice",
+      "options": [
+        "전혀 아니다",
+        "아니다",
+        "보통이다",
+        "그렇다",
+        "매우 그렇다"
+      ],
+      "rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": [
+          {
+            "feature": "positive_bias",
+            "dictionary_term": "훌륭한",
+            "match": "훌륭하다고",
+            "source": "assist"
+          }
+        ]
+      },
+      "feature_counts": {
+        "clarity": {
+          "vague_degree": 0,
+          "vague_frequency": 0,
+          "subjective_evaluation": 0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0
+        },
+        "answerability": {
+          "broad_recall": 0,
+          "absolute_expression": 0,
+          "excessive_precision": 0
+        },
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 1
+        }
+      },
+      "penalty_details": {
+        "clarity": {
+          "vague_degree": 0.0,
+          "vague_frequency": 0.0,
+          "subjective_evaluation": 0.0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0.0
+        },
+        "answerability": {
+          "broad_recall": 0.0,
+          "absolute_expression": 0.0,
+          "excessive_precision": 0.0
+        }
+      },
+      "raw_penalties": {
+        "clarity": 0.0,
+        "single_concept": 0.0,
+        "answerability": 0.0
+      },
+      "rule_scores": {
+        "clarity": 10.0,
+        "single_concept": 10.0,
+        "answerability": 10.0
+      },
+      "llm_scores": {
+        "clarity": {
+          "score": 7.0,
+          "reason": "문장은 이해 가능하지만 이중 부정 표현(생각하지 않으십니까) 때문에 읽는 데 약간의 부담이 있습니다."
+        },
+        "single_concept": {
+          "score": 9.0,
+          "reason": "서비스가 매우 훌륭한지에 대한 하나의 의견만 묻고 있습니다."
+        },
+        "answerability": {
+          "score": 8.0,
+          "reason": "응답자는 서비스 경험이나 인식을 바탕으로 답할 수 있습니다."
+        }
+      },
+      "final_scores": {
+        "clarity": 9.1,
+        "single_concept": 9.7,
+        "answerability": 9.4
+      },
+      "overall_pre_score": 9.4,
+      "overall_pre_score_100": 94.0,
+      "primary_issue_count": 0,
+      "auxiliary_issue_count": 1,
+      "issue_count": 1,
+      "has_issue": true,
+      "suggestion": {
+        "needed": false,
+        "recommended_question": null,
+        "reason": null
+      },
+      "exact_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": []
+      },
+      "assist_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": [
+          {
+            "feature": "positive_bias",
+            "dictionary_term": "훌륭한",
+            "match": "훌륭하다고",
+            "source": "assist"
+          }
+        ]
+      },
+      "auxiliary_rule_analysis": {
+        "neutrality": [
+          {
+            "feature": "positive_bias",
+            "dictionary_term": "훌륭한",
+            "match": "훌륭하다고",
+            "source": "assist"
+          }
+        ]
+      },
+      "auxiliary_feature_counts": {
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 1
+        }
+      },
+      "auxiliary_penalty_details": {
+        "neutrality": {
+          "leading_assertion": 0.0,
+          "positive_bias": 1.0
+        }
+      },
+      "auxiliary_raw_penalties": {
+        "neutrality": 1.0
+      },
+      "auxiliary_rule_scores": {
+        "neutrality": 8.2
+      },
+      "auxiliary_llm_scores": {
+        "neutrality": {
+          "score": 4.0,
+          "reason": "‘매우 훌륭하다’는 긍정적으로 유도하는 표현이라 응답을 특정 방향으로 이끌 수 있습니다."
+        }
+      }
+    },
+    {
+      "item_id": "Q3",
+      "question": "서비스의 속도와 안정성에 대해 어떻게 평가하십니까?",
+      "option_type": "single_choice",
+      "options": [
+        "매우 나쁨",
+        "나쁨",
+        "보통",
+        "좋음",
+        "매우 좋음"
+      ],
+      "rule_analysis": {
+        "clarity": [],
+        "single_concept": [
+          {
+            "feature": "double_barreled_connector",
+            "dictionary_term": "및",
+            "match": "와",
+            "source": "assist"
+          }
+        ],
+        "answerability": [],
+        "neutrality": []
+      },
+      "feature_counts": {
+        "clarity": {
+          "vague_degree": 0,
+          "vague_frequency": 0,
+          "subjective_evaluation": 0
+        },
+        "single_concept": {
+          "double_barreled_connector": 1
+        },
+        "answerability": {
+          "broad_recall": 0,
+          "absolute_expression": 0,
+          "excessive_precision": 0
+        },
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 0
+        }
+      },
+      "penalty_details": {
+        "clarity": {
+          "vague_degree": 0.0,
+          "vague_frequency": 0.0,
+          "subjective_evaluation": 0.0
+        },
+        "single_concept": {
+          "double_barreled_connector": 1.5
+        },
+        "answerability": {
+          "broad_recall": 0.0,
+          "absolute_expression": 0.0,
+          "excessive_precision": 0.0
+        }
+      },
+      "raw_penalties": {
+        "clarity": 0.0,
+        "single_concept": 1.5,
+        "answerability": 0.0
+      },
+      "rule_scores": {
+        "clarity": 10.0,
+        "single_concept": 7.3,
+        "answerability": 10.0
+      },
+      "llm_scores": {
+        "clarity": {
+          "score": 7.0,
+          "reason": "문장은 짧고 이해하기 쉽지만, '속도와 안정성'이 각각 무엇을 뜻하는지 구체적 기준은 없습니다."
+        },
+        "single_concept": {
+          "score": 3.0,
+          "reason": "속도와 안정성이라는 두 가지 다른 측면을 한 번에 평가하게 해 단일 개념이 아닙니다."
+        },
+        "answerability": {
+          "score": 7.0,
+          "reason": "대부분의 응답자는 서비스 경험을 바탕으로 답할 수 있지만, 두 속성을 함께 하나로 고르는 방식은 응답을 어렵게 합니다."
+        }
+      },
+      "final_scores": {
+        "clarity": 9.1,
+        "single_concept": 6.01,
+        "answerability": 9.1
+      },
+      "overall_pre_score": 8.07,
+      "overall_pre_score_100": 80.7,
+      "primary_issue_count": 1,
+      "auxiliary_issue_count": 0,
+      "issue_count": 1,
+      "has_issue": true,
+      "suggestion": {
+        "needed": false,
+        "recommended_question": null,
+        "reason": null
+      },
+      "exact_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": []
+      },
+      "assist_rule_analysis": {
+        "clarity": [],
+        "single_concept": [
+          {
+            "feature": "double_barreled_connector",
+            "dictionary_term": "및",
+            "match": "와",
+            "source": "assist"
+          },
+          {
+            "feature": "double_barreled_connector",
+            "dictionary_term": "및",
+            "match": "와",
+            "source": "assist"
+          }
+        ],
+        "answerability": [],
+        "neutrality": []
+      },
+      "auxiliary_rule_analysis": {
+        "neutrality": []
+      },
+      "auxiliary_feature_counts": {
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 0
+        }
+      },
+      "auxiliary_penalty_details": {
+        "neutrality": {
+          "leading_assertion": 0.0,
+          "positive_bias": 0.0
+        }
+      },
+      "auxiliary_raw_penalties": {
+        "neutrality": 0.0
+      },
+      "auxiliary_rule_scores": {
+        "neutrality": 10.0
+      },
+      "auxiliary_llm_scores": {
+        "neutrality": {
+          "score": 9.0,
+          "reason": "긍정·부정으로 유도하는 표현이 없고, 비교적 중립적인 문항입니다."
+        }
+      }
+    }
+  ]
+}

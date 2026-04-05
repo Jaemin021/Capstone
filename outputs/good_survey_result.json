@@ -1,0 +1,438 @@
+{
+  "survey_id": "GOOD_01",
+  "title": "서비스 만족도 조사 (양호)",
+  "item_count": 3,
+  "summary": {
+    "avg_overall_pre_score": 9.23,
+    "avg_overall_pre_score_100": 92.27,
+    "avg_final_scores": {
+      "clarity": 8.98,
+      "single_concept": 9.7,
+      "answerability": 9.0
+    },
+    "avg_auxiliary_llm_scores": {
+      "neutrality": 9.67
+    }
+  },
+  "items": [
+    {
+      "item_id": "Q1",
+      "question": "전반적으로 귀하는 우리 서비스에 얼마나 만족하십니까?",
+      "option_type": "single_choice",
+      "options": [
+        "전혀 만족하지 않는다",
+        "만족하지 않는다",
+        "보통이다",
+        "만족한다",
+        "매우 만족한다"
+      ],
+      "rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [
+          {
+            "feature": "broad_recall",
+            "dictionary_term": "전체적으로",
+            "match": "전반적으로",
+            "source": "assist"
+          }
+        ],
+        "neutrality": []
+      },
+      "feature_counts": {
+        "clarity": {
+          "vague_degree": 0,
+          "vague_frequency": 0,
+          "subjective_evaluation": 0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0
+        },
+        "answerability": {
+          "broad_recall": 1,
+          "absolute_expression": 0,
+          "excessive_precision": 0
+        },
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 0
+        }
+      },
+      "penalty_details": {
+        "clarity": {
+          "vague_degree": 0.0,
+          "vague_frequency": 0.0,
+          "subjective_evaluation": 0.0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0.0
+        },
+        "answerability": {
+          "broad_recall": 1.2,
+          "absolute_expression": 0.0,
+          "excessive_precision": 0.0
+        }
+      },
+      "raw_penalties": {
+        "clarity": 0.0,
+        "single_concept": 0.0,
+        "answerability": 1.2
+      },
+      "rule_scores": {
+        "clarity": 10.0,
+        "single_concept": 10.0,
+        "answerability": 7.84
+      },
+      "llm_scores": {
+        "clarity": {
+          "score": 9.0,
+          "reason": "질문이 단순하고 응답 척도도 명확해 쉽게 이해할 수 있습니다."
+        },
+        "single_concept": {
+          "score": 9.0,
+          "reason": "서비스 만족도 하나만 묻고 있어 단일 개념입니다."
+        },
+        "answerability": {
+          "score": 8.0,
+          "reason": "전반적인 만족도는 일반적으로 판단 가능하지만, ‘전반적으로’가 다소 주관적이라 응답 기준이 개인마다 달라질 수 있습니다."
+        }
+      },
+      "final_scores": {
+        "clarity": 9.7,
+        "single_concept": 9.7,
+        "answerability": 7.89
+      },
+      "overall_pre_score": 9.1,
+      "overall_pre_score_100": 91.0,
+      "primary_issue_count": 1,
+      "auxiliary_issue_count": 0,
+      "issue_count": 1,
+      "has_issue": true,
+      "suggestion": {
+        "needed": false,
+        "recommended_question": null,
+        "reason": null
+      },
+      "exact_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": []
+      },
+      "assist_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [
+          {
+            "feature": "broad_recall",
+            "dictionary_term": "전체적으로",
+            "match": "전반적으로",
+            "source": "assist"
+          }
+        ],
+        "neutrality": []
+      },
+      "auxiliary_rule_analysis": {
+        "neutrality": []
+      },
+      "auxiliary_feature_counts": {
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 0
+        }
+      },
+      "auxiliary_penalty_details": {
+        "neutrality": {
+          "leading_assertion": 0.0,
+          "positive_bias": 0.0
+        }
+      },
+      "auxiliary_raw_penalties": {
+        "neutrality": 0.0
+      },
+      "auxiliary_rule_scores": {
+        "neutrality": 10.0
+      },
+      "auxiliary_llm_scores": {
+        "neutrality": {
+          "score": 10.0,
+          "reason": "감정적으로 치우치지 않은 중립적 표현으로, 유도성이나 편향이 거의 없습니다."
+        }
+      }
+    },
+    {
+      "item_id": "Q2",
+      "question": "우리 서비스의 사용 편의성에 대해 어떻게 평가하십니까?",
+      "option_type": "single_choice",
+      "options": [
+        "매우 불편하다",
+        "불편하다",
+        "보통이다",
+        "편리하다",
+        "매우 편리하다"
+      ],
+      "rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": []
+      },
+      "feature_counts": {
+        "clarity": {
+          "vague_degree": 0,
+          "vague_frequency": 0,
+          "subjective_evaluation": 0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0
+        },
+        "answerability": {
+          "broad_recall": 0,
+          "absolute_expression": 0,
+          "excessive_precision": 0
+        },
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 0
+        }
+      },
+      "penalty_details": {
+        "clarity": {
+          "vague_degree": 0.0,
+          "vague_frequency": 0.0,
+          "subjective_evaluation": 0.0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0.0
+        },
+        "answerability": {
+          "broad_recall": 0.0,
+          "absolute_expression": 0.0,
+          "excessive_precision": 0.0
+        }
+      },
+      "raw_penalties": {
+        "clarity": 0.0,
+        "single_concept": 0.0,
+        "answerability": 0.0
+      },
+      "rule_scores": {
+        "clarity": 10.0,
+        "single_concept": 10.0,
+        "answerability": 10.0
+      },
+      "llm_scores": {
+        "clarity": {
+          "score": 8.0,
+          "reason": "사용 편의성이라는 평가 대상이 분명하고 응답 척도도 일관됩니다."
+        },
+        "single_concept": {
+          "score": 9.0,
+          "reason": "편의성에 대한 평가만 묻고 있어 한 가지 개념에 집중되어 있습니다."
+        },
+        "answerability": {
+          "score": 8.0,
+          "reason": "대부분의 응답자가 서비스 사용 경험을 바탕으로 답할 수 있습니다."
+        }
+      },
+      "final_scores": {
+        "clarity": 9.4,
+        "single_concept": 9.7,
+        "answerability": 9.4
+      },
+      "overall_pre_score": 9.5,
+      "overall_pre_score_100": 95.0,
+      "primary_issue_count": 0,
+      "auxiliary_issue_count": 0,
+      "issue_count": 0,
+      "has_issue": false,
+      "suggestion": {
+        "needed": false,
+        "recommended_question": null,
+        "reason": null
+      },
+      "exact_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": []
+      },
+      "assist_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": []
+      },
+      "auxiliary_rule_analysis": {
+        "neutrality": []
+      },
+      "auxiliary_feature_counts": {
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 0
+        }
+      },
+      "auxiliary_penalty_details": {
+        "neutrality": {
+          "leading_assertion": 0.0,
+          "positive_bias": 0.0
+        }
+      },
+      "auxiliary_raw_penalties": {
+        "neutrality": 0.0
+      },
+      "auxiliary_rule_scores": {
+        "neutrality": 10.0
+      },
+      "auxiliary_llm_scores": {
+        "neutrality": {
+          "score": 9.0,
+          "reason": "문구와 선택지가 특정 답을 유도하지 않고 중립적으로 구성되어 있습니다."
+        }
+      }
+    },
+    {
+      "item_id": "Q3",
+      "question": "고객 지원 서비스에 대한 만족도는 어느 정도입니까?",
+      "option_type": "single_choice",
+      "options": [
+        "매우 불만족",
+        "불만족",
+        "보통",
+        "만족",
+        "매우 만족"
+      ],
+      "rule_analysis": {
+        "clarity": [
+          {
+            "feature": "vague_degree",
+            "dictionary_term": "어느 정도",
+            "match": "어느 정도",
+            "source": "exact"
+          }
+        ],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": []
+      },
+      "feature_counts": {
+        "clarity": {
+          "vague_degree": 1,
+          "vague_frequency": 0,
+          "subjective_evaluation": 0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0
+        },
+        "answerability": {
+          "broad_recall": 0,
+          "absolute_expression": 0,
+          "excessive_precision": 0
+        },
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 0
+        }
+      },
+      "penalty_details": {
+        "clarity": {
+          "vague_degree": 1.0,
+          "vague_frequency": 0.0,
+          "subjective_evaluation": 0.0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0.0
+        },
+        "answerability": {
+          "broad_recall": 0.0,
+          "absolute_expression": 0.0,
+          "excessive_precision": 0.0
+        }
+      },
+      "raw_penalties": {
+        "clarity": 1.0,
+        "single_concept": 0.0,
+        "answerability": 0.0
+      },
+      "rule_scores": {
+        "clarity": 8.2,
+        "single_concept": 10.0,
+        "answerability": 10.0
+      },
+      "llm_scores": {
+        "clarity": {
+          "score": 7.0,
+          "reason": "‘어느 정도’가 다소 포괄적이지만, 만족도 척도와 함께 제시되어 의미는 비교적 분명합니다."
+        },
+        "single_concept": {
+          "score": 9.0,
+          "reason": "고객 지원 서비스에 대한 만족도 한 가지를 묻고 있어 이중 질문이 없습니다."
+        },
+        "answerability": {
+          "score": 9.0,
+          "reason": "응답자가 고객 지원 서비스를 이용한 경험이나 인식을 바탕으로 쉽게 답할 수 있습니다."
+        }
+      },
+      "final_scores": {
+        "clarity": 7.84,
+        "single_concept": 9.7,
+        "answerability": 9.7
+      },
+      "overall_pre_score": 9.08,
+      "overall_pre_score_100": 90.8,
+      "primary_issue_count": 1,
+      "auxiliary_issue_count": 0,
+      "issue_count": 1,
+      "has_issue": true,
+      "suggestion": {
+        "needed": false,
+        "recommended_question": null,
+        "reason": null
+      },
+      "exact_rule_analysis": {
+        "clarity": [
+          {
+            "feature": "vague_degree",
+            "match": "어느 정도"
+          }
+        ],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": []
+      },
+      "assist_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": []
+      },
+      "auxiliary_rule_analysis": {
+        "neutrality": []
+      },
+      "auxiliary_feature_counts": {
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 0
+        }
+      },
+      "auxiliary_penalty_details": {
+        "neutrality": {
+          "leading_assertion": 0.0,
+          "positive_bias": 0.0
+        }
+      },
+      "auxiliary_raw_penalties": {
+        "neutrality": 0.0
+      },
+      "auxiliary_rule_scores": {
+        "neutrality": 10.0
+      },
+      "auxiliary_llm_scores": {
+        "neutrality": {
+          "score": 10.0,
+          "reason": "중립적인 만족도 질문으로, 특정 응답을 유도하는 표현이 없습니다."
+        }
+      }
+    }
+  ]
+}

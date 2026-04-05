@@ -1,0 +1,24 @@
+{
+  "survey_id": "GOOD_01",
+  "title": "서비스 만족도 조사 (양호)",
+  "items": [
+    {
+      "item_id": "Q1",
+      "question": "전반적으로 귀하는 우리 서비스에 얼마나 만족하십니까?",
+      "option_type": "single_choice",
+      "options": ["전혀 만족하지 않는다", "만족하지 않는다", "보통이다", "만족한다", "매우 만족한다"]
+    },
+    {
+      "item_id": "Q2",
+      "question": "우리 서비스의 사용 편의성에 대해 어떻게 평가하십니까?",
+      "option_type": "single_choice",
+      "options": ["매우 불편하다", "불편하다", "보통이다", "편리하다", "매우 편리하다"]
+    },
+    {
+      "item_id": "Q3",
+      "question": "고객 지원 서비스에 대한 만족도는 어느 정도입니까?",
+      "option_type": "single_choice",
+      "options": ["매우 불만족", "불만족", "보통", "만족", "매우 만족"]
+    }
+  ]
+}

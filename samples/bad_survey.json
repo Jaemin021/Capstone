@@ -1,0 +1,24 @@
+{
+  "survey_id": "BAD_01",
+  "title": "서비스 만족도 조사 (문제 있음)",
+  "items": [
+    {
+      "item_id": "Q1",
+      "question": "귀하는 우리 서비스가 매우 훌륭하고 항상 만족스럽다고 생각하십니까?",
+      "option_type": "single_choice",
+      "options": ["전혀 아니다", "아니다", "보통이다", "그렇다", "매우 그렇다"]
+    },
+    {
+      "item_id": "Q2",
+      "question": "우리 서비스의 속도와 디자인이 모두 완벽하다고 느끼십니까?",
+      "option_type": "single_choice",
+      "options": ["전혀 아니다", "아니다", "보통이다", "그렇다", "매우 그렇다"]
+    },
+    {
+      "item_id": "Q3",
+      "question": "당신은 항상 모든 기능을 문제없이 사용하십니까?",
+      "option_type": "single_choice",
+      "options": ["예", "아니오"]
+    }
+  ]
+}

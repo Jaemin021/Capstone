@@ -1,0 +1,527 @@
+{
+  "survey_id": "BAD_01",
+  "title": "서비스 만족도 조사 (문제 있음)",
+  "item_count": 3,
+  "summary": {
+    "avg_overall_pre_score": 7.43,
+    "avg_overall_pre_score_100": 74.33,
+    "avg_final_scores": {
+      "clarity": 9.1,
+      "single_concept": 7.77,
+      "answerability": 5.43
+    },
+    "avg_auxiliary_llm_scores": {
+      "neutrality": 5.0
+    }
+  },
+  "items": [
+    {
+      "item_id": "Q1",
+      "question": "귀하는 우리 서비스가 매우 훌륭하고 항상 만족스럽다고 생각하십니까?",
+      "option_type": "single_choice",
+      "options": [
+        "전혀 아니다",
+        "아니다",
+        "보통이다",
+        "그렇다",
+        "매우 그렇다"
+      ],
+      "rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [
+          {
+            "feature": "absolute_expression",
+            "dictionary_term": "항상",
+            "match": "항상",
+            "source": "exact"
+          }
+        ],
+        "neutrality": [
+          {
+            "feature": "positive_bias",
+            "dictionary_term": "매우 훌륭한",
+            "match": "매우 훌륭하고",
+            "source": "assist"
+          }
+        ]
+      },
+      "feature_counts": {
+        "clarity": {
+          "vague_degree": 0,
+          "vague_frequency": 0,
+          "subjective_evaluation": 0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0
+        },
+        "answerability": {
+          "broad_recall": 0,
+          "absolute_expression": 1,
+          "excessive_precision": 0
+        },
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 1
+        }
+      },
+      "penalty_details": {
+        "clarity": {
+          "vague_degree": 0.0,
+          "vague_frequency": 0.0,
+          "subjective_evaluation": 0.0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0.0
+        },
+        "answerability": {
+          "broad_recall": 0.0,
+          "absolute_expression": 1.2,
+          "excessive_precision": 0.0
+        }
+      },
+      "raw_penalties": {
+        "clarity": 0.0,
+        "single_concept": 0.0,
+        "answerability": 1.2
+      },
+      "rule_scores": {
+        "clarity": 10.0,
+        "single_concept": 10.0,
+        "answerability": 7.84
+      },
+      "llm_scores": {
+        "clarity": {
+          "score": 7.0,
+          "reason": "문장은 이해 가능하지만 '매우 훌륭하고 항상 만족스럽다'가 다소 추상적입니다."
+        },
+        "single_concept": {
+          "score": 4.0,
+          "reason": "'매우 훌륭하다'와 '항상 만족스럽다'를 함께 묻고 있어 두 개의 평가가 결합되어 있습니다."
+        },
+        "answerability": {
+          "score": 5.0,
+          "reason": "현재 경험으로 답할 수는 있지만 '항상'은 모든 상황을 떠올리게 해 답변이 다소 어렵습니다."
+        }
+      },
+      "final_scores": {
+        "clarity": 9.1,
+        "single_concept": 8.2,
+        "answerability": 6.99
+      },
+      "overall_pre_score": 8.1,
+      "overall_pre_score_100": 81.0,
+      "primary_issue_count": 1,
+      "auxiliary_issue_count": 1,
+      "issue_count": 2,
+      "has_issue": true,
+      "suggestion": {
+        "needed": false,
+        "recommended_question": null,
+        "reason": null
+      },
+      "exact_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [
+          {
+            "feature": "absolute_expression",
+            "match": "항상"
+          }
+        ],
+        "neutrality": []
+      },
+      "assist_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [],
+        "neutrality": [
+          {
+            "feature": "positive_bias",
+            "dictionary_term": "매우 훌륭한",
+            "match": "매우 훌륭하고",
+            "source": "assist"
+          }
+        ]
+      },
+      "auxiliary_rule_analysis": {
+        "neutrality": [
+          {
+            "feature": "positive_bias",
+            "dictionary_term": "매우 훌륭한",
+            "match": "매우 훌륭하고",
+            "source": "assist"
+          }
+        ]
+      },
+      "auxiliary_feature_counts": {
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 1
+        }
+      },
+      "auxiliary_penalty_details": {
+        "neutrality": {
+          "leading_assertion": 0.0,
+          "positive_bias": 1.0
+        }
+      },
+      "auxiliary_raw_penalties": {
+        "neutrality": 1.0
+      },
+      "auxiliary_rule_scores": {
+        "neutrality": 8.2
+      },
+      "auxiliary_llm_scores": {
+        "neutrality": {
+          "score": 3.0,
+          "reason": "'매우 훌륭하고 항상 만족스럽다'는 긍정적으로 유도하는 표현이라 중립성이 약합니다."
+        }
+      }
+    },
+    {
+      "item_id": "Q2",
+      "question": "우리 서비스의 속도와 디자인이 모두 완벽하다고 느끼십니까?",
+      "option_type": "single_choice",
+      "options": [
+        "전혀 아니다",
+        "아니다",
+        "보통이다",
+        "그렇다",
+        "매우 그렇다"
+      ],
+      "rule_analysis": {
+        "clarity": [],
+        "single_concept": [
+          {
+            "feature": "double_barreled_connector",
+            "dictionary_term": "그리고",
+            "match": "와",
+            "source": "assist"
+          }
+        ],
+        "answerability": [
+          {
+            "feature": "excessive_precision",
+            "dictionary_term": "모두",
+            "match": "모두",
+            "source": "exact"
+          },
+          {
+            "feature": "excessive_precision",
+            "dictionary_term": "완벽하게",
+            "match": "완벽하다고",
+            "source": "assist"
+          }
+        ],
+        "neutrality": [
+          {
+            "feature": "positive_bias",
+            "dictionary_term": "완벽한",
+            "match": "완벽하다고",
+            "source": "assist"
+          }
+        ]
+      },
+      "feature_counts": {
+        "clarity": {
+          "vague_degree": 0,
+          "vague_frequency": 0,
+          "subjective_evaluation": 0
+        },
+        "single_concept": {
+          "double_barreled_connector": 1
+        },
+        "answerability": {
+          "broad_recall": 0,
+          "absolute_expression": 0,
+          "excessive_precision": 2
+        },
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 1
+        }
+      },
+      "penalty_details": {
+        "clarity": {
+          "vague_degree": 0.0,
+          "vague_frequency": 0.0,
+          "subjective_evaluation": 0.0
+        },
+        "single_concept": {
+          "double_barreled_connector": 1.5
+        },
+        "answerability": {
+          "broad_recall": 0.0,
+          "absolute_expression": 0.0,
+          "excessive_precision": 3.0
+        }
+      },
+      "raw_penalties": {
+        "clarity": 0.0,
+        "single_concept": 1.5,
+        "answerability": 3.0
+      },
+      "rule_scores": {
+        "clarity": 10.0,
+        "single_concept": 7.3,
+        "answerability": 4.6
+      },
+      "llm_scores": {
+        "clarity": {
+          "score": 8.0,
+          "reason": "문장은 이해하기 쉽지만 ‘모두 완벽하다’가 다소 과장되고 해석이 한쪽으로 치우칠 수 있습니다."
+        },
+        "single_concept": {
+          "score": 3.0,
+          "reason": "속도와 디자인이라는 두 가지 속성을 한 번에 묻고 있어 하나의 응답으로 구분해 답하기 어렵습니다."
+        },
+        "answerability": {
+          "score": 4.0,
+          "reason": "‘모두 완벽하다’는 매우 강한 절대평가라서 대부분의 응답자가 현실적으로 판단하기 어렵습니다."
+        }
+      },
+      "final_scores": {
+        "clarity": 9.4,
+        "single_concept": 6.01,
+        "answerability": 4.42
+      },
+      "overall_pre_score": 6.61,
+      "overall_pre_score_100": 66.1,
+      "primary_issue_count": 3,
+      "auxiliary_issue_count": 1,
+      "issue_count": 4,
+      "has_issue": true,
+      "suggestion": {
+        "needed": true,
+        "recommended_question": "우리 서비스의 속도와 디자인에 얼마나 만족하십니까?",
+        "reason": "속도와 디자인을 하나의 평가 항목으로 자연스럽게 묶고, ‘완벽하다’ 같은 과도한 표현을 줄여 더 중립적이고 답하기 쉬운 문항으로 다듬었습니다."
+      },
+      "exact_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [
+          {
+            "feature": "excessive_precision",
+            "match": "모두"
+          }
+        ],
+        "neutrality": []
+      },
+      "assist_rule_analysis": {
+        "clarity": [],
+        "single_concept": [
+          {
+            "feature": "double_barreled_connector",
+            "dictionary_term": "그리고",
+            "match": "와",
+            "source": "assist"
+          }
+        ],
+        "answerability": [
+          {
+            "feature": "excessive_precision",
+            "dictionary_term": "완벽하게",
+            "match": "완벽하다고",
+            "source": "assist"
+          }
+        ],
+        "neutrality": [
+          {
+            "feature": "positive_bias",
+            "dictionary_term": "완벽한",
+            "match": "완벽하다고",
+            "source": "assist"
+          }
+        ]
+      },
+      "auxiliary_rule_analysis": {
+        "neutrality": [
+          {
+            "feature": "positive_bias",
+            "dictionary_term": "완벽한",
+            "match": "완벽하다고",
+            "source": "assist"
+          }
+        ]
+      },
+      "auxiliary_feature_counts": {
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 1
+        }
+      },
+      "auxiliary_penalty_details": {
+        "neutrality": {
+          "leading_assertion": 0.0,
+          "positive_bias": 1.0
+        }
+      },
+      "auxiliary_raw_penalties": {
+        "neutrality": 1.0
+      },
+      "auxiliary_rule_scores": {
+        "neutrality": 8.2
+      },
+      "auxiliary_llm_scores": {
+        "neutrality": {
+          "score": 3.0,
+          "reason": "‘완벽하다고’라는 표현이 매우 긍정적으로 유도해 중립적인 응답을 방해합니다."
+        }
+      }
+    },
+    {
+      "item_id": "Q3",
+      "question": "당신은 항상 모든 기능을 문제없이 사용하십니까?",
+      "option_type": "single_choice",
+      "options": [
+        "예",
+        "아니오"
+      ],
+      "rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [
+          {
+            "feature": "absolute_expression",
+            "dictionary_term": "항상",
+            "match": "항상",
+            "source": "exact"
+          },
+          {
+            "feature": "absolute_expression",
+            "dictionary_term": "모든 경우",
+            "match": "모든",
+            "source": "assist"
+          }
+        ],
+        "neutrality": []
+      },
+      "feature_counts": {
+        "clarity": {
+          "vague_degree": 0,
+          "vague_frequency": 0,
+          "subjective_evaluation": 0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0
+        },
+        "answerability": {
+          "broad_recall": 0,
+          "absolute_expression": 2,
+          "excessive_precision": 0
+        },
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 0
+        }
+      },
+      "penalty_details": {
+        "clarity": {
+          "vague_degree": 0.0,
+          "vague_frequency": 0.0,
+          "subjective_evaluation": 0.0
+        },
+        "single_concept": {
+          "double_barreled_connector": 0.0
+        },
+        "answerability": {
+          "broad_recall": 0.0,
+          "absolute_expression": 2.4,
+          "excessive_precision": 0.0
+        }
+      },
+      "raw_penalties": {
+        "clarity": 0.0,
+        "single_concept": 0.0,
+        "answerability": 2.4
+      },
+      "rule_scores": {
+        "clarity": 10.0,
+        "single_concept": 10.0,
+        "answerability": 5.68
+      },
+      "llm_scores": {
+        "clarity": {
+          "score": 6.0,
+          "reason": "의미는 대체로 분명하지만 '모든 기능'과 '문제없이'가 너무 포괄적이라 어떤 상황을 기준으로 답해야 하는지 모호합니다."
+        },
+        "single_concept": {
+          "score": 7.0,
+          "reason": "기능 사용과 문제 여부를 함께 묻지만, 둘이 하나의 전반적 사용 가능성으로 묶여 있어 큰 이중질문은 아닙니다."
+        },
+        "answerability": {
+          "score": 3.0,
+          "reason": "'항상'과 '모든 기능'은 절대적 표현이라 실제 경험에 비해 답하기 어렵고, 현실적으로 예/아니오로 단정하기 힘듭니다."
+        }
+      },
+      "final_scores": {
+        "clarity": 8.8,
+        "single_concept": 9.1,
+        "answerability": 4.88
+      },
+      "overall_pre_score": 7.59,
+      "overall_pre_score_100": 75.9,
+      "primary_issue_count": 2,
+      "auxiliary_issue_count": 0,
+      "issue_count": 2,
+      "has_issue": true,
+      "suggestion": {
+        "needed": false,
+        "recommended_question": null,
+        "reason": null
+      },
+      "exact_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [
+          {
+            "feature": "absolute_expression",
+            "match": "항상"
+          }
+        ],
+        "neutrality": []
+      },
+      "assist_rule_analysis": {
+        "clarity": [],
+        "single_concept": [],
+        "answerability": [
+          {
+            "feature": "absolute_expression",
+            "dictionary_term": "모든 경우",
+            "match": "모든",
+            "source": "assist"
+          }
+        ],
+        "neutrality": []
+      },
+      "auxiliary_rule_analysis": {
+        "neutrality": []
+      },
+      "auxiliary_feature_counts": {
+        "neutrality": {
+          "leading_assertion": 0,
+          "positive_bias": 0
+        }
+      },
+      "auxiliary_penalty_details": {
+        "neutrality": {
+          "leading_assertion": 0.0,
+          "positive_bias": 0.0
+        }
+      },
+      "auxiliary_raw_penalties": {
+        "neutrality": 0.0
+      },
+      "auxiliary_rule_scores": {
+        "neutrality": 10.0
+      },
+      "auxiliary_llm_scores": {
+        "neutrality": {
+          "score": 9.0,
+          "reason": "특정 응답을 유도하는 표현은 없고, 비교적 중립적으로 질문합니다."
+        }
+      }
+    }
+  ]
+}
