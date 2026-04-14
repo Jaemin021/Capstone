@@ -1,0 +1,110 @@
+[응답 신뢰도 평가 코드 구조]
+
+메인 함수:
+analyze_response_reliability(survey: dict, response: dict) -> dict
+
+
+[입력]
+
+1. survey JSON
+- 설문 문항 메타데이터
+- 주요 필드:
+  item_id
+  question
+  option_type
+  options
+  is_reverse
+  is_trap
+  trap_type
+  trap_expected_answer
+  consistency_group
+  source_item_id
+
+2. response JSON
+- 사용자 응답 및 로그
+- 주요 필드:
+  response_id
+  participant_id
+  answers[]
+  survey_log
+
+
+[answers 내부]
+
+item_id : 문항 ID
+answer_value : 선택값 (숫자)
+answer_text : 주관식 응답
+selected_options : 복수 선택
+question_log :
+    response_time_ms
+    change_count
+    revisit_count
+    focus_loss_count
+
+
+[survey_log]
+
+total_response_time_ms : 전체 응답 시간
+tab_switch_count : 탭 이동 횟수
+focus_loss_count : 포커스 이탈 횟수
+page_refresh_count : 새로고침 횟수
+
+
+[처리 과정]
+
+1. feature 추출
+- instruction_fail
+- reverse_inconsistency
+- similar_item_inconsistency
+- straightlining
+- low_variance
+- extreme_repetition
+- excessive_tab_switch
+- high_focus_loss
+- excessive_revisit
+
+2. feature_counts 생성
+- 각 feature 발생 횟수
+
+3. penalty 계산
+- feature_counts × RESPONSE_PENALTY_WEIGHTS
+
+4. raw_penalties 계산
+- category별 총 penalty
+
+5. rule_scores 계산
+- penalty → 1~10 점수 변환
+
+6. overall_response_score 계산
+- category별 점수 가중 평균
+
+
+[출력 구조]
+
+result = {
+    survey_id
+    response_id
+    participant_id
+
+    feature_analysis        # 왜 문제인지 설명
+    feature_counts          # feature 발생 횟수
+
+    penalty_details         # feature별 penalty
+    raw_penalties           # category별 penalty
+    rule_scores             # category별 점수
+
+    overall_response_score      # 1~10
+    overall_response_score_100  # 0~100
+
+    flags                   # 주요 경고
+    issue_count             # 총 문제 개수
+    has_issue               # 문제 존재 여부
+}
+
+
+[flags 설명]
+
+instruction_fail : 함정문항 실패
+inconsistency : 일관성 문제
+straightlining : 동일 응답 반복
+suspicious_behavior : 이상 행동 로그

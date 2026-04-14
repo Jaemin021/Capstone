@@ -1,0 +1,274 @@
+[파일명] scoring/rule_scoring.py
+
+1. 역할
+- 문항 사전 신뢰도 평가에서 rule 기반 penalty와 score를 계산하는 파일
+- matcher.py에서 만든 feature_counts를 입력으로 받아
+  penalty_details → raw_penalties → rule_scores 로 변환
+
+즉 이 파일은
+"feature 개수"를 "숫자 점수"로 바꾸는 역할
+
+--------------------------------------------------
+
+2. 전체 흐름
+
+입력:
+- feature_counts
+
+처리:
+1) feature별 penalty 계산
+2) category별 raw penalty 합산
+3) raw penalty를 1~10 점수로 변환
+
+출력:
+- penalty_details
+- raw_penalties
+- rule_scores
+
+--------------------------------------------------
+
+3. import 관계
+
+불러오는 것:
+- config.PRIMARY_CATEGORIES
+- config.AUXILIARY_CATEGORIES
+- config.RULE_PENALTY_WEIGHTS
+- config.MAX_RAW_PENALTY
+- config.SCORE_MIN
+- config.SCORE_MAX
+- config.ROUND_DIGITS
+
+이 파일을 사용하는 곳:
+- pipeline.py
+
+--------------------------------------------------
+
+4. 주요 함수
+
+(1) clamp_score(value, min_value=SCORE_MIN, max_value=SCORE_MAX)
+- 점수를 최소/최대 범위 안으로 제한
+
+입력:
+- value: float
+
+출력:
+- float
+
+--------------------------------------
+
+(2) round_score(value)
+- config의 ROUND_DIGITS 기준으로 반올림
+
+입력:
+- value: float
+
+출력:
+- float
+
+--------------------------------------
+
+(3) compute_penalty_details(feature_counts, categories=None)
+- feature별 penalty를 상세하게 계산
+- feature별 count * weight 결과를 그대로 저장
+
+입력:
+- feature_counts
+- categories (선택)
+
+출력:
+{
+  "clarity": {
+    "vague_degree": 1.0,
+    "vague_frequency": 0.0,
+    ...
+  },
+  ...
+}
+
+의미:
+- 각 feature가 penalty에 얼마나 기여했는지 상세 분해
+
+--------------------------------------
+
+(4) compute_raw_penalties(feature_counts, categories=None)
+- category별 총 penalty 계산
+- feature penalty들을 모두 합산
+
+입력:
+- feature_counts
+- categories (선택)
+
+출력:
+{
+  "clarity": 1.0,
+  "single_concept": 0.0,
+  "answerability": 1.2
+}
+
+의미:
+- category별 총 penalty
+
+--------------------------------------
+
+(5) convert_penalty_to_rule_score(raw_penalty, category)
+- raw penalty를 1~10 점수로 변환
+
+입력:
+- raw_penalty: float
+- category: str
+
+출력:
+- float (1~10)
+
+변환 방식:
+1) raw_penalty / MAX_RAW_PENALTY 로 정규화
+2) penalty가 클수록 점수 낮아짐
+3) 최종 점수를 SCORE_MIN~SCORE_MAX 범위로 제한
+
+--------------------------------------
+
+(6) compute_rule_scores(raw_penalties, categories=None)
+- category별 raw penalty를 rule score로 변환
+
+입력:
+- raw_penalties
+- categories (선택)
+
+출력:
+{
+  "clarity": 8.2,
+  "single_concept": 10.0,
+  "answerability": 7.84
+}
+
+--------------------------------------
+
+(7) compute_auxiliary_raw_penalties(feature_counts)
+- 보조 category용 raw penalty 계산
+
+입력:
+- feature_counts
+
+출력:
+- auxiliary category raw penalties
+
+--------------------------------------
+
+(8) compute_auxiliary_rule_scores(raw_penalties)
+- 보조 category용 rule score 계산
+
+입력:
+- raw_penalties
+
+출력:
+- auxiliary category rule scores
+
+--------------------------------------------------
+
+5. 핵심 변수
+
+- RULE_PENALTY_WEIGHTS
+- MAX_RAW_PENALTY
+- SCORE_MIN
+- SCORE_MAX
+- ROUND_DIGITS
+
+- penalty_details
+- raw_penalties
+- rule_scores
+
+--------------------------------------------------
+
+6. 점수 계산 구조
+
+(1) feature penalty
+feature penalty = count * weight
+
+예:
+- broad_recall 1개
+- weight 1.2
+→ penalty 1.2
+
+--------------------------------------
+
+(2) raw penalty
+category raw penalty = feature penalty 합
+
+예:
+answerability:
+- broad_recall 1.2
+- absolute_expression 0.0
+- excessive_precision 0.0
+
+→ raw_penalty = 1.2
+
+--------------------------------------
+
+(3) rule score
+raw penalty를 MAX_RAW_PENALTY로 정규화한 뒤
+1~10 점수로 환산
+
+penalty가 커질수록 score가 낮아짐
+
+즉:
+- penalty 0 → score 10
+- penalty가 max에 가까움 → score 1에 가까움
+
+--------------------------------------------------
+
+7. pipeline.py와 연결 방식
+
+pipeline.py에서
+- feature_counts를 matcher + rule-assist merge 결과로 얻음
+- 이 파일에서
+  - compute_penalty_details()
+  - compute_raw_penalties()
+  - compute_rule_scores()
+  호출
+- 이후 score_combiner.py에서 LLM 점수와 결합
+
+즉 이 파일은
+"rule 기반 숫자 점수 계산기"
+
+--------------------------------------------------
+
+8. 현재 설계의 장점
+
+- 구조가 단순함
+- 해석 가능성이 높음
+- 어떤 feature가 얼마나 penalty를 줬는지 추적 가능
+- config 값만 바꿔도 민감도 조절 가능
+
+--------------------------------------------------
+
+9. 주의사항
+
+- 이 파일은 rule 기반 score만 계산함
+- LLM 점수 결합은 여기서 하지 않음
+- category weight 평균도 여기서 하지 않음
+- 오직
+  feature_counts -> penalty -> rule_score
+  만 담당
+
+즉 역할이 매우 명확함
+
+--------------------------------------------------
+
+10. 향후 확장 가능 포인트
+
+(1) feature별 penalty weight 튜닝
+- 사후 라벨(CITC 등)에 맞춰 최적화 가능
+
+(2) MAX_RAW_PENALTY 조정
+- 점수 곡선 민감도 조정 가능
+
+(3) 응답 신뢰도용 response_rule_scoring.py 작성 시
+- 이 파일 구조를 거의 그대로 재사용 가능
+
+--------------------------------------------------
+
+11. 핵심 한 줄 요약
+
+feature_counts를 입력으로 받아
+feature penalty, category raw penalty, rule score를 계산하는
+문항 사전 평가용 점수 변환 파일

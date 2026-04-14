@@ -1,0 +1,244 @@
+[파일명] rules/matcher.py
+
+1. 역할
+- 사전(TERM_DICTIONARY) 기반 exact rule matcher
+- 질문 텍스트 안에 특정 용어가 포함되어 있는지 검사
+- rule_analysis와 feature_counts를 생성하는 역할
+- 문항 사전 신뢰도 평가에서 "가장 처음 feature를 뽑는 파일"
+
+--------------------------------------------------
+
+2. 전체 흐름
+
+입력: question text 또는 item dict
+
+1) category별 dictionary 규칙 불러오기
+2) feature별 term list 순회
+3) text 안에 term이 포함되는지 검사
+4) 매칭된 term 기록
+5) feature_counts 계산
+6) issue_count 계산
+
+출력:
+- rule_analysis
+- feature_counts
+- issue_count
+- has_issue
+
+--------------------------------------------------
+
+3. import 관계
+
+불러오는 것:
+- config.PRIMARY_CATEGORIES
+- config.AUXILIARY_CATEGORIES
+- dictionaries.terms.TERM_DICTIONARY
+
+이 파일을 사용하는 곳:
+- pipeline.py
+
+--------------------------------------------------
+
+4. 주요 함수
+
+(1) find_term_matches(text, terms)
+- text 안에 terms가 포함되는지 검사
+- 중복 없이 매칭된 용어 목록 반환
+
+입력:
+- text: 질문 문자열
+- terms: 사전 용어 list
+
+출력:
+- matched_terms: list[str]
+
+--------------------------------------
+
+(2) analyze_text_by_dictionary(text, category_filter=None)
+- TERM_DICTIONARY 기준으로 text 분석
+- category별 rule_analysis / feature_counts 생성
+
+입력:
+- text: 분석할 질문 문자열
+- category_filter: 특정 category만 분석할 때 사용
+
+출력:
+{
+  "rule_analysis": {...},
+  "feature_counts": {...}
+}
+
+--------------------------------------
+
+(3) count_total_issues(rule_analysis, categories=None)
+- rule_analysis 안의 전체 매칭 개수 계산
+
+입력:
+- rule_analysis
+- categories (선택)
+
+출력:
+- int
+
+--------------------------------------
+
+(4) has_any_issue(rule_analysis, categories=None)
+- 하나라도 이슈가 있는지 bool 반환
+
+입력:
+- rule_analysis
+- categories (선택)
+
+출력:
+- bool
+
+--------------------------------------
+
+(5) analyze_question(question)
+- 질문 문자열 하나만 단독 분석
+
+입력:
+- question: str
+
+출력:
+{
+  "question": ...,
+  "rule_analysis": ...,
+  "feature_counts": ...,
+  "issue_count": ...,
+  "has_issue": ...
+}
+
+--------------------------------------
+
+(6) analyze_item_rules(item)
+- 문항(dict) 단위 규칙 분석 함수
+- 현재는 question 중심으로만 분석
+- option_type / options는 현재 저장만 하고 실제 규칙 분석엔 거의 안 씀
+- 나중에 확장 가능하도록 구조만 열어둠
+
+입력:
+- item: dict
+  - item_id
+  - question
+  - option_type
+  - options
+
+출력:
+{
+  "item_id": ...,
+  "question": ...,
+  "option_type": ...,
+  "options": ...,
+  "rule_analysis": ...,
+  "feature_counts": ...,
+  "primary_issue_count": ...,
+  "auxiliary_issue_count": ...,
+  "issue_count": ...,
+  "has_issue": ...
+}
+
+--------------------------------------------------
+
+5. 핵심 변수
+
+- PRIMARY_CATEGORIES
+- AUXILIARY_CATEGORIES
+- ALL_CATEGORIES
+- TERM_DICTIONARY
+
+- rule_analysis
+- feature_counts
+- primary_issue_count
+- auxiliary_issue_count
+- issue_count
+
+--------------------------------------------------
+
+6. 결과 구조 설명
+
+(1) rule_analysis 구조
+
+{
+  "clarity": [
+    {
+      "feature": "vague_degree",
+      "dictionary_term": "적절한",
+      "match": "적절한",
+      "source": "exact"
+    }
+  ],
+  "single_concept": [],
+  "answerability": [],
+  "neutrality": []
+}
+
+의미:
+- category별 어떤 feature가 어떤 term 때문에 잡혔는지 기록
+
+--------------------------------------
+
+(2) feature_counts 구조
+
+{
+  "clarity": {
+    "vague_degree": 1,
+    "vague_frequency": 0,
+    "subjective_evaluation": 0
+  },
+  ...
+}
+
+의미:
+- category별 feature가 몇 번 잡혔는지 숫자로 저장
+- 이후 scoring에서 penalty 계산에 사용됨
+
+--------------------------------------------------
+
+7. pipeline.py와 연결 방식
+
+pipeline.py 안에서:
+- analyze_item_rules(item) 호출
+- 여기서 나온
+  - rule_analysis
+  - feature_counts
+를 받아서
+- penalty 계산
+- rule score 계산
+- llm assist merge
+등으로 이어짐
+
+즉 이 파일은 문항 평가의 "입력 feature 추출기" 역할
+
+--------------------------------------------------
+
+8. 현재 한계 / 주의사항
+
+- 현재는 "question text"만 분석함
+- option_type, options는 아직 분석에 실질적으로 반영되지 않음
+- 문자열 포함 여부(term in text) 방식이라 단순 exact match 기반
+- 문맥 해석은 못 하고 단어 수준 탐지만 수행
+- 그래서 이후 pipeline.py에서 LLM assist를 추가로 붙여 보완하는 구조
+
+--------------------------------------------------
+
+9. 향후 확장 가능 포인트
+
+(1) option_type 기반 규칙 추가 가능
+예:
+- scale 문항인데 options 개수가 이상한 경우
+- multiple_choice인데 선택지 구조가 이상한 경우
+
+(2) options 텍스트 자체 분석 가능
+예:
+- 선택지가 비대칭적인지
+- 유도적인 표현이 있는지
+
+(3) 구조 적합성 검사도 여기 또는 별도 모듈로 확장 가능
+
+--------------------------------------------------
+
+10. 핵심 한 줄 요약
+
+질문 텍스트를 TERM_DICTIONARY와 exact match 방식으로 비교해서
+rule_analysis와 feature_counts를 만드는 파일

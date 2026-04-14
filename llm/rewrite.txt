@@ -1,0 +1,220 @@
+[파일명] llm/rewrite.py
+
+1. 역할
+- 문항 사전 신뢰도 평가 결과를 기반으로
+  문항을 더 좋은 형태로 수정(rewrite)하는 LLM 제안 생성
+- 점수가 낮은 문항에 대해 개선된 질문 문장을 추천
+
+즉 이 파일은
+"문항 개선 제안 생성기 (Rewrite LLM)"
+
+--------------------------------------------------
+
+2. 전체 흐름
+
+입력:
+- question
+- option_type
+- options
+- rule_analysis
+- final_scores
+- overall_pre_score
+
+처리:
+1) rewrite 프롬프트 생성
+2) OpenAI API 호출
+3) 구조화 응답 파싱
+4) 추천 문장 + 이유 반환
+
+출력:
+- suggestion dict
+
+--------------------------------------------------
+
+3. import 관계
+
+불러오는 것:
+- typing: Dict, List
+- pydantic: BaseModel, Field
+- openai / OpenAI
+- config.LLM_MODEL
+- llm.eval_prompts.build_rewrite_prompt
+
+이 파일을 사용하는 곳:
+- pipeline.py
+
+--------------------------------------------------
+
+4. 주요 클래스
+
+(1) RewriteSuggestion
+- LLM 응답 구조 정의
+
+필드:
+- recommended_question: 개선된 질문
+- reason: 왜 더 좋은지 설명
+
+즉 LLM이 반드시 이 구조로 응답하도록 강제
+
+--------------------------------------------------
+
+5. 주요 함수
+
+(1) empty_suggestion()
+- rewrite가 필요 없을 때 기본 반환값
+
+출력:
+{
+  "needed": False,
+  "recommended_question": None,
+  "reason": None
+}
+
+pipeline에서 점수가 충분히 높을 때 사용됨
+
+--------------------------------------
+
+(2) suggest_question_rewrite(...)
+- 핵심 함수
+- LLM을 호출해서 개선된 문항 생성
+
+입력:
+- question: str
+- option_type: str
+- options: List[str]
+- rule_analysis: Dict
+- final_scores: Dict
+- overall_pre_score: float
+
+출력:
+{
+  "needed": True,
+  "recommended_question": "...",
+  "reason": "..."
+}
+
+처리 흐름:
+1) build_rewrite_prompt()로 프롬프트 생성
+2) OpenAI structured output 호출
+3) RewriteSuggestion 형태로 파싱
+4) dict 형태로 반환
+
+--------------------------------------------------
+
+6. 핵심 변수
+
+- client = OpenAI()
+- LLM_MODEL
+
+- messages
+- response
+- parsed
+
+--------------------------------------------------
+
+7. pipeline.py와 연결 방식
+
+pipeline.py에서:
+
+1) final_scores 계산
+2) overall_pre_score 계산
+
+3) 조건 체크
+   if ENABLE_REWRITE_SUGGESTION
+   and overall_pre_score_100 < REWRITE_THRESHOLD
+
+4) suggest_question_rewrite() 호출
+
+5) 결과를 item["suggestion"]에 저장
+
+즉 흐름:
+
+문항 평가 완료
+→ 점수 낮음
+→ rewrite LLM 호출
+→ 추천 문장 생성
+
+--------------------------------------------------
+
+8. 중요한 특징
+
+- rewrite는 항상 실행되는 것이 아님
+- score 기반으로 조건부 실행
+
+조건:
+- overall_pre_score가 threshold보다 낮을 때만 실행
+
+즉
+"문항 품질이 낮을 때만 개입하는 구조"
+
+--------------------------------------------------
+
+9. free evaluation LLM과의 관계
+
+이 파일도 LLM을 사용하지만 역할이 다름
+
+구분:
+
+(1) eval_evaluator.py
+- 문항을 평가
+- score + reason 생성
+
+(2) rewrite.py
+- 문항을 수정
+- 새로운 문장 생성
+
+즉:
+- eval = 평가자
+- rewrite = 개선자
+
+--------------------------------------------------
+
+10. 에러 처리
+
+다음 오류를 RuntimeError로 변환
+
+- AuthenticationError → API 키 오류
+- RateLimitError → 사용량 제한
+- APIConnectionError → 네트워크 오류
+- 기타 → Rewrite LLM 오류
+
+--------------------------------------------------
+
+11. 현재 설계의 장점
+
+- 점수 기반으로 필요할 때만 실행 → 비용 절감
+- 구조화 응답으로 안정성 확보
+- rule_analysis + score를 함께 사용 → 더 정교한 수정 가능
+
+--------------------------------------------------
+
+12. 주의사항
+
+- 이 파일은 점수 계산과 무관
+- 오직 "문장 생성"만 담당
+- 자동 반영 여부는 pipeline 밖에서 결정해야 함
+
+즉:
+- 생성만 하고 적용은 안 함
+
+--------------------------------------------------
+
+13. 향후 확장 가능 포인트
+
+(1) multiple rewrite 제안
+- 지금은 1개만 반환
+- 나중에 top-3 제안 가능
+
+(2) 스타일 옵션 추가
+- 더 간결하게 / 더 공식적으로 등
+
+(3) 자동 반영 옵션
+- survey_augmenter에서 적용 여부 결정
+
+--------------------------------------------------
+
+14. 핵심 한 줄 요약
+
+문항 평가 결과를 기반으로
+LLM이 더 나은 질문 문장을 생성해주는
+문항 개선(Rewrite) 전용 모듈

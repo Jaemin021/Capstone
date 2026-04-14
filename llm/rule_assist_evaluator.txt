@@ -1,0 +1,286 @@
+[파일명] llm/rule_assist_evaluator.py
+
+1. 역할
+- exact rule matcher를 보조하는 LLM 모듈
+- TERM_DICTIONARY를 기준으로
+  형태소 변화 / 표현 변화만 추가 탐지
+- 새로운 feature를 만드는 것이 아니라
+  기존 dictionary feature 체계를 보조하는 역할
+
+즉 이 파일은
+"rule 시스템 내부의 LLM 보조 탐지기"
+
+--------------------------------------------------
+
+2. 전체 흐름
+
+입력:
+- question
+- categories
+- exact_rule_analysis (선택)
+
+처리:
+1) rule-assist 프롬프트 생성
+2) OpenAI API 호출
+3) 구조화 응답 파싱
+4) dictionary 기준으로 feature / term 검증
+5) matcher와 호환되는 rule_analysis 형태로 정규화
+
+출력:
+{
+  "rule_analysis": {
+    "clarity": [...],
+    "single_concept": [...],
+    "answerability": [...],
+    "neutrality": [...]
+  }
+}
+
+--------------------------------------------------
+
+3. import 관계
+
+불러오는 것:
+- typing: Dict, List, Optional
+- pydantic: BaseModel, Field
+- openai / OpenAI
+- config.LLM_MODEL
+- dictionaries.terms.TERM_DICTIONARY
+- llm.rule_assist_prompts.build_rule_assist_prompt
+
+이 파일을 사용하는 곳:
+- pipeline.py
+
+--------------------------------------------------
+
+4. 주요 클래스
+
+(1) RuleMatch
+- rule-assist LLM이 반환해야 하는 매칭 1개 구조
+
+필드:
+- feature
+- dictionary_term
+- match
+
+의미:
+- feature: TERM_DICTIONARY의 feature 이름
+- dictionary_term: 사전에 있는 canonical term
+- match: 실제 질문에서 매칭된 표현
+
+--------------------------------------
+
+(2) RuleAssistResponse
+- 전체 LLM 응답 구조
+- category별 RuleMatch 리스트를 가짐
+
+필드:
+- clarity
+- single_concept
+- answerability
+- neutrality
+
+즉 LLM 출력 schema 역할
+
+--------------------------------------------------
+
+5. 주요 함수
+
+(1) normalize_rule_assist_result(llm_raw_result, categories)
+- LLM 결과를 기존 matcher와 유사한 형태로 정규화
+- dictionary 검증도 함께 수행
+
+입력:
+- llm_raw_result: Dict
+- categories: List[str]
+
+출력:
+{
+  "rule_analysis": {
+    "clarity": [
+      {
+        "feature": "...",
+        "dictionary_term": "...",
+        "match": "...",
+        "source": "assist"
+      }
+    ],
+    ...
+  }
+}
+
+검증 과정:
+1) feature가 해당 category의 valid feature인지 확인
+2) dictionary_term이 실제 TERM_DICTIONARY에 존재하는지 확인
+3) feature / dictionary_term / match 중 하나라도 비면 제외
+4) 통과한 것만 source="assist" 붙여 저장
+
+즉 LLM이 이상한 feature를 만들어도 걸러냄
+
+--------------------------------------
+
+(2) get_rule_assist_analysis(question, categories=None, exact_rule_analysis=None)
+- 핵심 함수
+- rule-assist LLM 호출 후 정규화 결과 반환
+
+입력:
+- question: str
+- categories: Optional[List[str]]
+- exact_rule_analysis: Optional[Dict]
+
+출력:
+{
+  "rule_analysis": {
+    ...
+  }
+}
+
+설명:
+- exact matcher가 놓친 형태 변형 / 표현 변형을
+  LLM이 보조적으로 찾아줌
+- exact_rule_analysis를 함께 주면
+  프롬프트 차원에서 중복 탐지를 줄이게 함
+
+--------------------------------------------------
+
+6. 핵심 변수
+
+- client = OpenAI()
+- LLM_MODEL
+- TERM_DICTIONARY
+
+- categories
+- messages
+- response
+- parsed
+- normalized
+
+--------------------------------------------------
+
+7. pipeline.py와 연결 방식
+
+pipeline.py에서 흐름은 이렇게 됨
+
+1) analyze_item_rules(item)
+   -> exact rule_analysis, feature_counts 생성
+
+2) get_rule_assist_analysis(...)
+   -> assist rule_analysis 생성
+
+3) merge_rule_analysis(...)
+   -> exact + assist 병합
+
+4) rebuild_feature_counts_from_rule_analysis(...)
+   -> 최종 feature_counts 재계산
+
+즉 이 파일은
+"exact rule 결과를 보완하는 모듈"
+
+--------------------------------------------------
+
+8. 매우 중요한 구분
+
+이 파일의 LLM은
+"free evaluation LLM"이 아니다.
+
+정확한 구분은 다음과 같다.
+
+(1) exact rule
+- matcher.py
+- TERM_DICTIONARY exact match
+
+(2) rule-assist LLM
+- 이 파일
+- TERM_DICTIONARY 기반
+- 형태 변형 / 표현 변형만 보조 탐지
+- 새로운 feature 생성 금지
+
+(3) free evaluation LLM
+- eval_evaluator.py
+- 문항 전체 품질 점수와 이유 생성
+
+즉 이 파일은
+"rule 파트에 속하는 LLM" 이다
+
+--------------------------------------------------
+
+9. 이 파일이 중요한 이유
+
+한국어는 exact match만으로 한계가 있음
+예:
+- 조사 변화
+- 어미 변화
+- 약간 다른 표현
+
+그래서
+exact matcher가 못 잡는 걸
+rule-assist LLM이 보완하는 구조
+
+하지만 완전히 자유롭게 두면 안 되므로
+normalize 단계에서 TERM_DICTIONARY 기준 검증을 다시 함
+
+즉:
+- 유연성은 LLM이 제공
+- 통제는 dictionary 검증이 제공
+
+--------------------------------------------------
+
+10. 안전장치 / 설계 포인트
+
+(1) feature 검증
+- dictionary에 없는 feature면 버림
+
+(2) dictionary_term 검증
+- 사전에 없는 canonical term이면 버림
+
+(3) source 구분
+- assist로 명시해서 나중에 exact와 구분 가능
+
+(4) exact_rule_analysis 전달 가능
+- 프롬프트에서 중복 탐지 줄이는 데 사용
+
+즉 LLM을 쓰지만
+상당히 보수적으로 통제된 구조
+
+--------------------------------------------------
+
+11. 에러 처리
+
+다음 오류를 RuntimeError로 변환
+
+- AuthenticationError -> API 키 오류
+- RateLimitError -> 사용량 제한
+- APIConnectionError -> 네트워크 연결 오류
+- 기타 -> Rule-assist LLM 오류
+
+--------------------------------------------------
+
+12. 현재 설계의 장점
+
+- 한국어 형태 변화 대응 가능
+- exact rule의 부족함 보완
+- feature 체계가 dictionary 기반으로 고정되어 안정적
+- pipeline.py에서 exact와 쉽게 병합 가능
+
+--------------------------------------------------
+
+13. 주의사항
+
+- 이 파일은 점수 계산 안 함
+- feature_counts도 직접 최종 확정하지 않음
+- 오직 assist rule_analysis만 생성함
+
+최종 점수 흐름은:
+exact rule + assist rule 병합
+-> feature_counts 재계산
+-> rule_scoring
+-> free evaluation LLM
+-> final score
+
+--------------------------------------------------
+
+14. 핵심 한 줄 요약
+
+TERM_DICTIONARY를 기준으로
+exact matcher가 놓친 형태소/표현 변형만
+보수적으로 보조 탐지하는 rule-assist LLM 모듈

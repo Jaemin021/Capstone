@@ -1,0 +1,447 @@
+[응답 신뢰도 평가용 JSON 구조 고정본]
+
+1. 기본 원칙
+
+- survey JSON 과 response JSON 은 분리한다.
+- survey JSON = 설문 문항 메타데이터
+- response JSON = 사용자의 실제 응답 + 로그 데이터
+- 응답 신뢰도 평가는 survey JSON + response JSON 을 함께 사용한다.
+
+--------------------------------------------------
+
+2. survey JSON 역할
+
+survey JSON은 응답 신뢰도 계산 시
+"문항의 성격"을 알려주는 메타데이터 역할을 한다.
+
+응답 신뢰도 계산에 필요한 survey item 필드:
+
+- item_id
+- question
+- option_type
+- options
+- required
+- is_reverse
+- is_trap
+- trap_type
+- trap_expected_answer
+- consistency_group
+- source_item_id
+
+--------------------------------------------------
+
+3. survey JSON 기본 구조
+
+{
+  "survey_id": "GOOD_01",
+  "title": "서비스 만족도 조사",
+  "items": [
+    {
+      "item_id": "Q1",
+      "question": "전반적으로 귀하는 우리 서비스에 얼마나 만족하십니까?",
+      "option_type": "single_choice",
+      "options": [
+        "전혀 만족하지 않는다",
+        "만족하지 않는다",
+        "보통이다",
+        "만족한다",
+        "매우 만족한다"
+      ],
+      "required": true,
+      "is_reverse": false,
+      "is_trap": false,
+      "trap_type": null,
+      "trap_expected_answer": null,
+      "consistency_group": "service_satisfaction",
+      "source_item_id": null
+    }
+  ]
+}
+
+--------------------------------------------------
+
+4. survey item 필드 설명
+
+- item_id
+  문항 고유 ID
+
+- question
+  문항 텍스트
+
+- option_type
+  문항 유형
+  예: single_choice, multiple_choice, scale, text, number
+
+- options
+  선택지 목록
+
+- required
+  필수 응답 여부
+
+- is_reverse
+  역문항 여부
+  true이면 원문항과 반대 의미의 문항
+
+- is_trap
+  함정문항 여부
+  주로 지시형 함정문항에 사용
+
+- trap_type
+  함정문항 종류
+  예: instruction
+  역문항은 is_reverse로 관리하고, trap_type은 지시형 위주로 사용
+
+- trap_expected_answer
+  지시형 함정문항의 정답 값
+  예: "3번을 선택하세요" 라면 3
+
+- consistency_group
+  일관성 비교 그룹 ID
+  역문항/유사문항끼리 같은 그룹으로 묶음
+
+- source_item_id
+  역문항이나 파생 문항이 어떤 원문항에서 나왔는지 추적용
+  원본 문항이면 null
+
+--------------------------------------------------
+
+5. response JSON 역할
+
+response JSON은 사용자의 실제 응답과 로그를 저장한다.
+
+응답 신뢰도 계산에 필요한 정보:
+
+- 어떤 설문에 응답했는지
+- 각 문항에 무엇을 선택했는지
+- 문항별 행동 로그
+- 설문 전체 로그
+
+--------------------------------------------------
+
+6. response JSON 기본 구조
+
+{
+  "survey_id": "GOOD_01",
+  "response_id": "R001",
+  "participant_id": "P001",
+  "answers": [
+    {
+      "item_id": "Q1",
+      "answer_value": 4,
+      "answer_text": null,
+      "selected_options": null,
+      "question_log": {
+        "response_time_ms": 2100,
+        "change_count": 1,
+        "revisit_count": 0,
+        "focus_loss_count": 0
+      }
+    },
+    {
+      "item_id": "Q2",
+      "answer_value": 4,
+      "answer_text": null,
+      "selected_options": null,
+      "question_log": {
+        "response_time_ms": 1800,
+        "change_count": 0,
+        "revisit_count": 1,
+        "focus_loss_count": 0
+      }
+    }
+  ],
+  "survey_log": {
+    "total_response_time_ms": 9500,
+    "tab_switch_count": 1,
+    "focus_loss_count": 0,
+    "page_refresh_count": 0,
+    "device_type": "mobile",
+    "browser": "chrome",
+    "os": "android"
+  }
+}
+
+--------------------------------------------------
+
+7. response JSON 필드 설명
+
+- survey_id
+  어떤 설문에 대한 응답인지 식별
+
+- response_id
+  응답 1건의 고유 ID
+
+- participant_id
+  응답자 ID
+  익명 처리 시 내부 난수 ID 등으로 관리 가능
+
+- answers
+  문항별 응답 목록
+
+- survey_log
+  설문 전체 로그
+
+--------------------------------------------------
+
+8. answers 내부 구조
+
+각 answer는 다음 필드를 가진다.
+
+- item_id
+  어떤 문항에 대한 응답인지
+
+- answer_value
+  단일 선택형 / 척도형 응답 값
+  예: 1, 2, 3, 4, 5
+
+- answer_text
+  주관식 응답 텍스트
+  객관식이면 null 가능
+
+- selected_options
+  복수 선택형일 때 사용
+  예: [1, 3]
+  단일 선택이면 null 가능
+
+- question_log
+  문항별 행동 로그
+
+--------------------------------------------------
+
+9. question_log 내부 구조
+
+- response_time_ms
+  해당 문항 응답에 걸린 시간(ms)
+
+- change_count
+  선택을 몇 번 바꿨는지
+
+- revisit_count
+  이전 문항 갔다가 다시 돌아온 횟수
+
+- focus_loss_count
+  해당 문항 응답 중 포커스를 잃은 횟수
+
+--------------------------------------------------
+
+10. survey_log 내부 구조
+
+- total_response_time_ms
+  전체 설문 응답 시간(ms)
+
+- tab_switch_count
+  앱/탭 전환 횟수
+
+- focus_loss_count
+  전체 설문 중 포커스 이탈 횟수
+
+- page_refresh_count
+  새로고침 횟수
+
+- device_type
+  예: mobile, desktop, tablet
+
+- browser
+  예: chrome, safari
+
+- os
+  예: android, ios, windows
+
+--------------------------------------------------
+
+11. 현재 응답 신뢰도 평가 category
+
+현재 MVP에서는 speed는 제외하고 다음 4개 category를 사용한다.
+
+- instruction
+- consistency
+- pattern
+- behavior
+
+--------------------------------------------------
+
+12. category별 feature
+
+[instruction]
+- instruction_fail
+  지시형 함정문항 실패
+
+[consistency]
+- reverse_inconsistency
+  역문항과 원문항이 논리적으로 불일치
+- similar_item_inconsistency
+  유사 문항끼리 응답 차이가 큼
+
+[pattern]
+- straightlining
+  여러 문항에 같은 값 반복
+- low_variance
+  응답 분산이 매우 낮음
+- extreme_repetition
+  극단값 반복 응답
+
+[behavior]
+- excessive_tab_switch
+  탭 전환 많음
+- high_focus_loss
+  포커스 이탈 많음
+- excessive_revisit
+  revisit 많음
+
+--------------------------------------------------
+
+13. 현재 응답 신뢰도 출력 구조
+
+응답 신뢰도 결과 JSON은 다음 구조를 사용한다.
+
+{
+  "survey_id": "GOOD_01",
+  "response_id": "R001",
+  "participant_id": "P001",
+
+  "feature_analysis": {
+    "instruction": [],
+    "consistency": [],
+    "pattern": [],
+    "behavior": []
+  },
+
+  "feature_counts": {
+    "instruction": {
+      "instruction_fail": 0
+    },
+    "consistency": {
+      "reverse_inconsistency": 1,
+      "similar_item_inconsistency": 0
+    },
+    "pattern": {
+      "straightlining": 0,
+      "low_variance": 1,
+      "extreme_repetition": 0
+    },
+    "behavior": {
+      "excessive_tab_switch": 0,
+      "high_focus_loss": 0,
+      "excessive_revisit": 1
+    }
+  },
+
+  "penalty_details": {
+    "instruction": {
+      "instruction_fail": 0.0
+    },
+    "consistency": {
+      "reverse_inconsistency": 2.0,
+      "similar_item_inconsistency": 0.0
+    },
+    "pattern": {
+      "straightlining": 0.0,
+      "low_variance": 1.2,
+      "extreme_repetition": 0.0
+    },
+    "behavior": {
+      "excessive_tab_switch": 0.0,
+      "high_focus_loss": 0.0,
+      "excessive_revisit": 0.5
+    }
+  },
+
+  "raw_penalties": {
+    "instruction": 0.0,
+    "consistency": 2.0,
+    "pattern": 1.2,
+    "behavior": 0.5
+  },
+
+  "rule_scores": {
+    "instruction": 10.0,
+    "consistency": 6.4,
+    "pattern": 7.84,
+    "behavior": 9.1
+  },
+
+  "overall_response_score": 8.37,
+  "overall_response_score_100": 83.7,
+
+  "flags": {
+    "instruction_fail": false,
+    "inconsistency": true,
+    "straightlining": false,
+    "suspicious_behavior": true
+  },
+
+  "issue_count": 3,
+  "has_issue": true
+}
+
+--------------------------------------------------
+
+14. 출력 필드 설명
+
+- feature_analysis
+  어떤 이유로 feature가 잡혔는지 상세 기록
+
+- feature_counts
+  category별 feature 발생 횟수
+
+- penalty_details
+  feature별 penalty 값
+
+- raw_penalties
+  category별 총 penalty
+
+- rule_scores
+  category별 1~10 점수
+
+- overall_response_score
+  최종 응답 신뢰도 점수 (1~10)
+
+- overall_response_score_100
+  최종 응답 신뢰도 점수 (100점 환산)
+
+- flags
+  프론트에서 빠르게 표시하기 위한 주요 경고 플래그
+
+- issue_count
+  전체 문제 feature 개수
+
+- has_issue
+  하나라도 문제가 있으면 true
+
+--------------------------------------------------
+
+15. 통계 기반 보정은 현재 단계에서 제외
+
+현재는 rule-based 응답 신뢰도만 구현한다.
+
+통계 기반 보정은 나중 단계에서 추가한다.
+그때 사용할 후보 정보는 예:
+
+- item별 평균 응답 시간
+- item별 분산
+- 개인 평균 응답 패턴
+- residual
+- burden
+
+즉 지금은
+response JSON 구조를 먼저 고정하고
+나중에 응답이 충분히 쌓이면 통계 기반 점수를 별도로 추가한다.
+
+--------------------------------------------------
+
+16. 현재 구현 우선순위
+
+1) response JSON 구조 확정
+2) response_rule_scoring.py 구현
+3) response_score_combiner.py 구현
+4) response_pipeline.py 구현
+5) 샘플 response JSON 생성
+6) 이후 필요 시 통계 기반 보정 추가
+
+--------------------------------------------------
+
+17. 핵심 한 줄 요약
+
+설문 JSON은 문항 메타데이터,
+응답 JSON은 실제 응답 + 로그 데이터이며,
+응답 신뢰도 평가는 두 JSON을 함께 사용해 계산한다.

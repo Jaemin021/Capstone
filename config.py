@@ -120,3 +120,63 @@ POST_METRIC_MAPPING = {
     "single_concept": "citc_score",
     "answerability": "missing_score",
 }
+
+
+# -------------------------
+# Response reliability settings 응답 쪽
+# -------------------------
+
+# -------------------------
+# Response reliability settings
+# -------------------------
+
+RESPONSE_CATEGORIES = [
+    "instruction",
+    "consistency",
+    "pattern",
+    "behavior",
+]
+
+RESPONSE_CATEGORY_LABELS = {
+    "instruction": "지시형 함정문항",
+    "consistency": "응답 일관성",
+    "pattern": "응답 패턴",
+    "behavior": "행동 로그",
+}
+
+RESPONSE_PENALTY_WEIGHTS = {
+    "instruction": {
+        "instruction_fail": 3.0,
+    },
+    "consistency": {
+        "reverse_inconsistency": 2.0,
+        "similar_item_inconsistency": 1.5,
+    },
+    "pattern": {
+        "straightlining": 1.5,
+        "low_variance": 1.2,
+        "extreme_repetition": 1.0,
+    },
+    "behavior": {
+        "excessive_tab_switch": 0.8,
+        "high_focus_loss": 0.8,
+        "excessive_revisit": 0.5,
+    },
+}
+
+MAX_RESPONSE_RAW_PENALTY = {
+    "instruction": 5.0,
+    "consistency": 5.0,
+    "pattern": 5.0,
+    "behavior": 5.0,
+}
+
+RESPONSE_SCORE_WEIGHTS = {
+    "instruction": 0.40,
+    "consistency": 0.30,
+    "pattern": 0.15,
+    "behavior": 0.15,
+}
+
+MIN_RESPONSES_FOR_STAT_SCORING = 30
+USE_RESPONSE_STAT_SCORING = True

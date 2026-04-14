@@ -1,0 +1,240 @@
+[파일명] scoring/score_combiner.py
+
+1. 역할
+- 문항 사전 신뢰도 평가에서
+  rule score와 free evaluation LLM score를 결합하는 파일
+- category별 최종 점수(final_scores) 계산
+- 전체 문항 점수(overall_pre_score) 계산
+
+즉 이 파일은
+"rule 기반 점수"와 "free evaluation LLM 점수"를 합쳐서
+최종 문항 사전 신뢰도 점수를 만드는 역할
+
+--------------------------------------------------
+
+2. 전체 흐름
+
+입력:
+- rule_scores
+- llm_scores
+
+처리:
+1) category별 rule score 확인
+2) free evaluation LLM score 추출
+3) rule / llm weight로 결합
+4) category별 final_scores 생성
+5) final_scores 평균으로 overall_pre_score 계산
+
+출력:
+- final_scores
+- overall_pre_score
+- overall_pre_score_100
+
+--------------------------------------------------
+
+3. import 관계
+
+불러오는 것:
+- config.PRIMARY_CATEGORIES
+- config.CATEGORY_SCORE_WEIGHTS
+- config.SCORE_MIN
+- config.SCORE_MAX
+- config.ROUND_DIGITS
+
+이 파일을 사용하는 곳:
+- pipeline.py
+
+--------------------------------------------------
+
+4. 주요 함수
+
+(1) clamp_score(value, min_value=SCORE_MIN, max_value=SCORE_MAX)
+- 점수를 최소/최대 범위 안으로 제한
+
+입력:
+- value: float
+
+출력:
+- float
+
+--------------------------------------
+
+(2) round_score(value)
+- config의 ROUND_DIGITS 기준으로 반올림
+
+입력:
+- value: float
+
+출력:
+- float
+
+--------------------------------------
+
+(3) combine_rule_and_llm_scores(rule_scores, llm_scores, categories=None)
+- category별 rule score와 free evaluation LLM score를 결합
+- 최종 final_scores 생성
+
+입력:
+- rule_scores: dict
+- llm_scores: dict
+- categories: list[str] | None
+
+출력:
+{
+  "clarity": ...,
+  "single_concept": ...,
+  "answerability": ...
+}
+
+처리 방식:
+1) 각 category의 rule_score를 읽음
+2) llm_scores[category]["score"] 값을 읽음
+3) llm score가 없으면 rule score를 그대로 사용
+4) CATEGORY_SCORE_WEIGHTS의 rule / llm 비율로 가중 평균
+5) clamp + round 처리 후 final_scores에 저장
+
+--------------------------------------
+
+(4) compute_overall_pre_score(final_scores, categories=None)
+- category별 final_scores 평균 계산
+- overall_pre_score 와 overall_pre_score_100 생성
+
+입력:
+- final_scores: dict
+- categories: list[str] | None
+
+출력:
+- tuple[float, float]
+  (overall_pre_score, overall_pre_score_100)
+
+처리 방식:
+1) 대상 category 점수만 추출
+2) 평균 계산
+3) overall_pre_score = 1~10 scale
+4) overall_pre_score_100 = 100점 환산
+
+--------------------------------------------------
+
+5. 핵심 변수
+
+- CATEGORY_SCORE_WEIGHTS
+- PRIMARY_CATEGORIES
+- SCORE_MIN
+- SCORE_MAX
+- ROUND_DIGITS
+
+- rule_scores
+- llm_scores
+- final_scores
+- overall_pre_score
+- overall_pre_score_100
+
+--------------------------------------------------
+
+6. 점수 계산 구조
+
+(1) category별 final score
+
+final_score = (rule_score * rule_weight) + (llm_score * llm_weight)
+
+예:
+- clarity rule_score = 10.0
+- clarity llm_score = 9.0
+- weights = rule 0.7 / llm 0.3
+
+→ final_score = 10.0*0.7 + 9.0*0.3 = 9.7
+
+--------------------------------------
+
+(2) overall pre score
+
+overall_pre_score = final_scores 평균
+overall_pre_score_100 = overall_pre_score * 10
+
+예:
+- clarity = 9.7
+- single_concept = 9.7
+- answerability = 7.89
+
+→ 평균 = 9.1
+→ 100점 환산 = 91.0
+
+--------------------------------------------------
+
+7. pipeline.py와 연결 방식
+
+pipeline.py에서
+1) rule_scoring.py로 rule_scores 계산
+2) llm.eval_evaluator.py로 llm_scores 계산
+3) 이 파일에서 combine_rule_and_llm_scores() 호출
+4) final_scores 생성
+5) compute_overall_pre_score() 호출
+6) overall_pre_score 생성
+
+즉 이 파일은
+"문항 사전 평가 최종 결합기"
+
+--------------------------------------------------
+
+8. 매우 중요한 구분
+
+이 파일에서 결합하는 LLM 점수는
+"free evaluation LLM" 점수다.
+
+즉:
+- rule-assist LLM 점수 아님
+- exact rule 보조 탐지 결과 아님
+
+흐름은 정확히 이렇게 구분해야 함:
+
+1) exact rule
+2) rule-assist LLM
+   -> 둘을 합쳐서 rule_analysis / feature_counts 만듦
+3) rule_scoring.py
+   -> rule_scores 계산
+4) free evaluation LLM
+   -> llm_scores 계산
+5) score_combiner.py
+   -> rule_scores + free evaluation llm_scores 결합
+
+--------------------------------------------------
+
+9. 예외 처리 / 주의사항
+
+- rule_score가 없으면 ValueError 발생
+- llm_score가 없으면 rule_score를 fallback으로 사용
+- 즉 LLM 호출이 실패하거나 score가 없더라도 시스템은 작동 가능
+
+이건 안정성 측면에서 중요함
+
+--------------------------------------------------
+
+10. 현재 설계의 장점
+
+- rule 기반 안정성과 LLM의 유연성을 동시에 사용
+- LLM 점수가 없어도 돌아감
+- category별 가중치를 다르게 줄 수 있음
+- 최종 점수 해석이 쉬움
+
+--------------------------------------------------
+
+11. 향후 확장 가능 포인트
+
+(1) CATEGORY_SCORE_WEIGHTS 최적화
+- 사후 라벨(CITC 등)에 맞춰
+  rule/llm 비중을 조정 가능
+
+(2) 보조 category 포함 여부 확장
+- 현재 overall_pre_score는 primary categories 기준
+- 필요시 auxiliary 포함 버전 만들 수 있음
+
+(3) 응답 신뢰도용 response_score_combiner.py 작성 시
+- 이 파일 구조를 거의 그대로 재사용 가능
+- 다만 응답 쪽은 free evaluation LLM 없이 rule-only로 먼저 갈 가능성이 큼
+
+--------------------------------------------------
+
+12. 핵심 한 줄 요약
+
+rule_scores와 free evaluation llm_scores를 가중 평균으로 결합해
+문항의 최종 사전 신뢰도 점수(final_scores, overall_pre_score)를 계산하는 파일

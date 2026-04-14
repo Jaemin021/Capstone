@@ -1,0 +1,38 @@
+[설문 신뢰도 평가 시스템 전체 구조]
+
+1. 설문 생성 단계
+- 사용자가 설문을 생성
+- 문항, 옵션, 메타정보 설정
+- survey JSON 생성 및 저장
+
+2. 사전 문항 신뢰도 평가 단계
+- survey JSON 입력
+- 문항별 rule + LLM 기반 평가 수행
+- 점수 및 문제 feature 출력
+- 필요 시 문항 수정 및 개선
+
+3. 설문 배포 및 응답 수집 단계
+- 설문 링크 또는 QR 코드 생성
+- 사용자 응답 수집
+- 프론트에서 raw 응답 및 로그 수집
+
+4. response JSON 생성 단계 (백엔드)
+- raw 응답 데이터를 response JSON 구조로 변환
+- question_log 및 survey_log 구성
+
+5. 응답 신뢰도 평가 단계 (현재 구현 완료)
+- survey JSON + response JSON 입력
+- feature 추출
+- penalty 계산
+- category별 score 계산
+- overall_response_score 계산
+
+6. 결과 제공 단계
+- 응답 신뢰도 점수 표시
+- 문제 feature 표시
+- flags 표시 (경고)
+- 낮은 신뢰도 응답 필터링 기능 제공
+
+7. 사후 문항 평가 단계 (추후 구현)
+- 응답 데이터 기반 문항 품질 평가
+- 분산, CITC, missing 등 계산

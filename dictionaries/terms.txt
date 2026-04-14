@@ -1,0 +1,210 @@
+[파일명] dictionaries/terms.py
+
+1. 역할
+- 문항 사전 신뢰도 평가에서 사용하는 핵심 단어사전
+- exact rule matcher의 기준 데이터
+- category별 feature와 그 feature를 유발하는 단어/표현 목록 저장
+
+--------------------------------------------------
+
+2. 전체 구조
+
+TERM_DICTIONARY = {
+    "category": {
+        "feature_name": [term1, term2, ...]
+    }
+}
+
+즉 구조는 다음과 같음
+
+category
+-> feature
+-> term list
+
+--------------------------------------------------
+
+3. 현재 category 구성
+
+(1) clarity
+- 문항 표현이 얼마나 명확한지 관련 feature
+
+(2) single_concept
+- 문항이 하나의 개념만 묻는지 관련 feature
+
+(3) neutrality
+- 문항이 유도적/편향적인지 관련 feature
+
+(4) answerability
+- 응답자가 실제로 답할 수 있는지 관련 feature
+
+--------------------------------------------------
+
+4. category별 feature 정리
+
+[clarity]
+
+(1) vague_degree
+- 정도가 애매한 표현
+- 예:
+  적절한, 적당한, 충분한, 어느 정도, 꽤, 상당히, 많이, 조금
+
+(2) vague_frequency
+- 빈도가 애매한 표현
+- 예:
+  자주, 가끔, 종종, 보통, 대체로, 일반적으로, 대부분
+
+(3) subjective_evaluation
+- 기준이 주관적인 표현
+- 예:
+  빠르게, 느리게, 원활하게, 효율적으로, 잘
+
+--------------------------------------
+
+[single_concept]
+
+(1) double_barreled_connector
+- 이중질문 가능성을 높이는 연결어
+- 예:
+  그리고, 및, 또한, 또는, 혹은, 뿐만 아니라, 더불어, 아울러, 동시에, 함께
+
+--------------------------------------
+
+[neutrality]
+
+(1) leading_assertion
+- 응답을 유도할 수 있는 단정 표현
+- 예:
+  당연히, 반드시, 확실히, 분명히, 틀림없이
+
+(2) positive_bias
+- 지나치게 긍정적/우호적인 표현
+- 예:
+  매우 우수한, 매우 훌륭한, 효과적인, 도움이 되는, 바람직한,
+  긍정적인, 문제가 없는, 신뢰할 수 있는, 탁월한, 훌륭한,
+  우수한, 좋은, 최선의, 이상적인, 완벽한
+
+--------------------------------------
+
+[answerability]
+
+(1) broad_recall
+- 회상 범위가 너무 넓은 표현
+- 예:
+  지금까지, 과거 전체, 평생, 오랫동안, 전체적으로
+
+(2) absolute_expression
+- 너무 절대적인 표현
+- 예:
+  항상, 매번, 모든 경우, 모든 상황에서, 항시, 한 번도 빠짐없이
+
+(3) excessive_precision
+- 응답자에게 과도하게 정확한 판단을 요구하는 표현
+- 예:
+  정확한 원인, 객관적으로, 완벽하게, 모든 이유, 실제 영향, 정확히, 완전히, 모두, 전부
+
+--------------------------------------------------
+
+5. matcher.py와 연결 방식
+
+rules/matcher.py 에서
+- category별로 TERM_DICTIONARY를 읽음
+- feature별 term list를 순회
+- question 안에 term이 포함되는지 검사
+- 매칭된 term을 rule_analysis에 기록
+- 개수를 feature_counts로 저장
+
+즉 이 파일은 matcher의 "기준 사전 데이터"
+
+--------------------------------------------------
+
+6. 이 사전의 의미 (중요)
+
+이 사전은 "정확한 exact match 기준"이다.
+
+즉 기본 rule의 출발점은:
+- term in text
+방식임
+
+예:
+- question 안에 "어느 정도"가 있으면 vague_degree 1개
+- question 안에 "항상"이 있으면 absolute_expression 1개
+
+--------------------------------------------------
+
+7. 네 프로젝트에서 LLM과의 관계 (중요)
+
+이 파일의 term들은 단순 rule용 단어사전이지만,
+실제 시스템에서는 여기서 끝나지 않음.
+
+기존 방식은 다음과 같음:
+
+1) exact dictionary 검사
+- matcher.py에서 term in text 방식으로 먼저 잡음
+
+2) rule-assist LLM 보조
+- 동일한 TERM_DICTIONARY를 LLM에게 줌
+- "새 feature를 만들지 말고"
+- "형태소 변화나 약간의 표현 변화만 잡아라" 라는 방식으로 보조 탐지
+
+3) exact 결과 + assist 결과 병합
+- pipeline.py에서 merge_rule_analysis 수행
+
+즉
+TERM_DICTIONARY는 exact rule 기준이자
+rule-assist LLM의 기준 사전이기도 함
+
+--------------------------------------------------
+
+8. 매우 중요한 구분
+
+네 프로젝트에서 LLM은 두 종류다.
+
+(1) rule-assist LLM
+- TERM_DICTIONARY를 기반으로 동작
+- 형태소 변화 / 표현 변화만 보조 탐지
+- 새로운 feature나 새로운 category를 만들지 않음
+- "rule 시스템의 일부"
+
+(2) free evaluation LLM
+- 문항 전체를 보고 점수와 이유를 생성
+- rule과는 별도의 독립 평가 축
+- scoring에서 rule score와 결합됨
+
+즉 앞으로 설명할 때
+"rule + llm" 이라고 하면 헷갈릴 수 있으므로
+반드시 아래처럼 구분해야 함
+
+- exact rule
+- rule-assist LLM
+- free evaluation LLM
+
+--------------------------------------------------
+
+9. 현재 한계 / 주의사항
+
+- 한국어는 형태소 변화가 많아서 exact match만으로는 한계가 있음
+- 그래서 rule-assist LLM이 붙어 있는 구조
+- 하지만 사전 자체가 너무 넓어지면 과검출 가능성도 있음
+- 특히 긍정 표현, 주관적 표현은 문맥에 따라 문제 아닐 수도 있음
+
+--------------------------------------------------
+
+10. 향후 확장 가능 포인트
+
+(1) feature별 term 보강
+- 실제 실험 결과 보고 단어 추가/삭제 가능
+
+(2) category 확장
+- 예: 구조 적합성, 민감성 등
+
+(3) options용 사전 분리
+- 현재는 mostly question 중심
+- 나중에는 선택지 표현용 dictionary 따로 둘 수 있음
+
+--------------------------------------------------
+
+11. 핵심 한 줄 요약
+
+TERM_DICTIONARY는
+문항 사전 신뢰도 평가에서 exact rule matcher와
+rule-assist LLM이 함께 참조하는 핵심 feature 사전이다.

@@ -1,0 +1,76 @@
+{
+  "survey_id": "GOOD_01",
+  "response_id": "R_GOOD_001",
+  "participant_id": "P001",
+  "answers": [
+    {
+      "item_id": "Q1",
+      "answer_value": 4,
+      "answer_text": null,
+      "selected_options": null,
+      "question_log": {
+        "response_time_ms": 2200,
+        "change_count": 1,
+        "revisit_count": 0,
+        "focus_loss_count": 0
+      }
+    },
+    {
+      "item_id": "Q2",
+      "answer_value": 2,
+      "answer_text": null,
+      "selected_options": null,
+      "question_log": {
+        "response_time_ms": 2400,
+        "change_count": 1,
+        "revisit_count": 0,
+        "focus_loss_count": 0
+      }
+    },
+    {
+      "item_id": "Q3",
+      "answer_value": 4,
+      "answer_text": null,
+      "selected_options": null,
+      "question_log": {
+        "response_time_ms": 2100,
+        "change_count": 0,
+        "revisit_count": 0,
+        "focus_loss_count": 0
+      }
+    },
+    {
+      "item_id": "Q4",
+      "answer_value": 4,
+      "answer_text": null,
+      "selected_options": null,
+      "question_log": {
+        "response_time_ms": 2300,
+        "change_count": 1,
+        "revisit_count": 0,
+        "focus_loss_count": 0
+      }
+    },
+    {
+      "item_id": "Q5",
+      "answer_value": 2,
+      "answer_text": null,
+      "selected_options": null,
+      "question_log": {
+        "response_time_ms": 2000,
+        "change_count": 0,
+        "revisit_count": 0,
+        "focus_loss_count": 0
+      }
+    }
+  ],
+  "survey_log": {
+    "total_response_time_ms": 11000,
+    "tab_switch_count": 0,
+    "focus_loss_count": 0,
+    "page_refresh_count": 0,
+    "device_type": "mobile",
+    "browser": "chrome",
+    "os": "android"
+  }
+}

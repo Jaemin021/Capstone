@@ -1,0 +1,269 @@
+[파일명] llm/eval_evaluator.py
+
+1. 역할
+- free evaluation LLM을 호출해서 문항 품질 점수를 계산하는 파일
+- rule 기반 feature 탐지와는 별개의 독립 평가 축
+- category별 점수(score)와 이유(reason)를 생성
+- 결과를 안전한 dict 형태로 정규화(normalize)해서 pipeline.py에 반환
+
+즉 이 파일은
+"문항 전체를 보고 LLM이 평가 점수와 이유를 생성하는 평가기"
+
+--------------------------------------------------
+
+2. 전체 흐름
+
+입력:
+- question
+- option_type
+- options
+- rule_analysis
+- feature_counts
+
+처리:
+1) 평가 프롬프트 생성
+2) OpenAI API 호출
+3) 구조화 응답(Pydantic) 파싱
+4) category별 score/reason 정규화
+5) pipeline.py로 반환
+
+출력:
+- llm_scores dict
+
+--------------------------------------------------
+
+3. import 관계
+
+불러오는 것:
+- typing: Dict, List, Optional, Any
+- pydantic: BaseModel, Field
+- openai / OpenAI
+- config.PRIMARY_CATEGORIES
+- config.LLM_MODEL
+- config.INCLUDE_AUXILIARY_LLM_SCORES
+- llm.eval_prompts.build_evaluation_prompt
+
+이 파일을 사용하는 곳:
+- pipeline.py
+
+--------------------------------------------------
+
+4. 주요 클래스
+
+(1) CategoryEvaluation
+- category 하나에 대한 LLM 평가 결과 구조
+
+필드:
+- score: 1~10 품질 점수
+- reason: 짧고 구체적인 이유
+
+--------------------------------------
+
+(2) LLMEvaluationResponse
+- 전체 LLM 응답 구조
+- category별로 CategoryEvaluation을 가질 수 있음
+
+필드:
+- clarity
+- single_concept
+- answerability
+- neutrality
+
+즉 LLM 출력 JSON의 expected schema 역할
+
+--------------------------------------------------
+
+5. 주요 함수
+
+(1) _normalize_category_value(value)
+- category별 LLM 결과를 안전하게 정규화
+- score가 없거나 잘못된 경우 None 처리
+- reason이 비어 있으면 기본 메시지로 채움
+
+입력:
+- value: Any
+
+출력:
+{
+  "score": float | None,
+  "reason": str
+}
+
+의미:
+- LLM 출력이 조금 깨져도 pipeline이 안전하게 쓸 수 있게 정리
+
+--------------------------------------
+
+(2) normalize_llm_scores(llm_raw_result)
+- 전체 category 결과를 정규화
+- PRIMARY_CATEGORIES는 항상 정규화
+- auxiliary neutrality는 config에 따라 포함 여부 결정
+
+입력:
+- llm_raw_result: Dict
+
+출력:
+{
+  "clarity": {"score": ..., "reason": ...},
+  "single_concept": {"score": ..., "reason": ...},
+  "answerability": {"score": ..., "reason": ...},
+  "neutrality": {"score": ..., "reason": ...} or None
+}
+
+--------------------------------------
+
+(3) get_llm_evaluation(question, option_type, options, rule_analysis, feature_counts)
+- 핵심 함수
+- 평가 프롬프트 생성 후 OpenAI API 호출
+- 구조화 응답 파싱 후 normalize 해서 반환
+
+입력:
+- question: str
+- option_type: str
+- options: List[str]
+- rule_analysis: Dict
+- feature_counts: Dict
+
+출력:
+- llm_scores dict
+
+예시:
+{
+  "clarity": {
+    "score": 9.0,
+    "reason": "질문이 단순하고 응답 척도도 명확해 쉽게 이해할 수 있습니다."
+  },
+  ...
+}
+
+--------------------------------------------------
+
+6. 핵심 변수
+
+- client = OpenAI()
+- LLM_MODEL
+- PRIMARY_CATEGORIES
+- INCLUDE_AUXILIARY_LLM_SCORES
+
+- messages
+- response
+- parsed
+- normalized
+
+--------------------------------------------------
+
+7. pipeline.py와 연결 방식
+
+pipeline.py 안에서:
+1) exact rule + rule-assist 결과 병합
+2) feature_counts 계산
+3) get_llm_evaluation() 호출
+4) llm_scores 반환
+5) score_combiner.py에서 rule_scores와 결합
+
+즉 이 파일은
+"free evaluation LLM 점수 생성기"
+
+--------------------------------------------------
+
+8. 매우 중요한 구분
+
+이 파일의 LLM은
+"free evaluation LLM" 이다.
+
+즉:
+- TERM_DICTIONARY 기반 exact rule 보조용 아님
+- 형태소 변화만 잡는 rule-assist LLM 아님
+- 문항 전체를 보고 품질을 평가하는 독립 평가자 역할
+
+정확한 구분:
+
+1) exact rule
+2) rule-assist LLM
+   -> feature_counts 생성까지 사용
+
+3) free evaluation LLM
+   -> 이 파일에서 별도로 점수/이유 생성
+
+4) score_combiner.py
+   -> rule_scores + free evaluation llm_scores 결합
+
+--------------------------------------------------
+
+9. 에러 처리
+
+다음 오류를 RuntimeError로 변환
+
+- openai.AuthenticationError
+  -> "API 키 오류"
+
+- openai.RateLimitError
+  -> "사용량 제한"
+
+- openai.APIConnectionError
+  -> "네트워크 연결 오류"
+
+- 기타 예외
+  -> "LLM 오류: ..."
+
+의미:
+- 상위 pipeline에서 다루기 쉽도록 에러 메시지 단순화
+
+--------------------------------------------------
+
+10. normalize가 필요한 이유
+
+LLM 출력은 항상 완벽하지 않을 수 있음
+예:
+- score 누락
+- reason 비어 있음
+- dict 구조가 아님
+
+그래서 normalize 단계에서:
+- score를 float로 강제 변환
+- 실패 시 None
+- reason 기본값 채움
+
+즉 pipeline 안정성을 높이는 역할
+
+--------------------------------------------------
+
+11. 현재 설계의 장점
+
+- Pydantic schema로 구조화 응답 강제
+- normalize 단계가 있어 안정적
+- auxiliary category 포함 여부 config로 제어 가능
+- score와 reason을 함께 받아 해석 가능성 높음
+
+--------------------------------------------------
+
+12. 주의사항
+
+- 이 파일은 점수 계산 자체를 하지 않음
+- weight 결합도 하지 않음
+- 오직 LLM 호출과 정규화만 담당
+
+즉
+LLM 평가값 생성 전용 파일
+
+--------------------------------------------------
+
+13. 향후 확장 가능 포인트
+
+(1) category 추가 가능
+- 새로운 schema field 추가하면 됨
+
+(2) fallback 전략 강화 가능
+- LLM 실패 시 기본 점수 반환 등
+
+(3) response 신뢰도 쪽에도 LLM 평가를 붙이고 싶다면
+- 별도 evaluator 파일을 따로 만드는 것이 좋음
+- 현재 파일과 섞지 않는 것이 좋음
+
+--------------------------------------------------
+
+14. 핵심 한 줄 요약
+
+문항 전체를 보고 free evaluation LLM이
+category별 score와 reason을 생성하고
+이를 안전한 dict 형태로 정규화해 반환하는 파일

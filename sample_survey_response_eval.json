@@ -1,0 +1,101 @@
+{
+  "survey_id": "GOOD_01",
+  "title": "서비스 만족도 조사 (응답 신뢰도 테스트용)",
+  "items": [
+    {
+      "item_id": "Q1",
+      "question": "전반적으로 귀하는 우리 서비스에 얼마나 만족하십니까?",
+      "option_type": "single_choice",
+      "options": [
+        "전혀 만족하지 않는다",
+        "만족하지 않는다",
+        "보통이다",
+        "만족한다",
+        "매우 만족한다"
+      ],
+      "required": true,
+      "is_reverse": false,
+      "is_trap": false,
+      "trap_type": null,
+      "trap_expected_answer": null,
+      "consistency_group": "service_satisfaction",
+      "source_item_id": null
+    },
+    {
+      "item_id": "Q2",
+      "question": "우리 서비스에 대체로 만족하지 않는다.",
+      "option_type": "single_choice",
+      "options": [
+        "전혀 그렇지 않다",
+        "그렇지 않다",
+        "보통이다",
+        "그렇다",
+        "매우 그렇다"
+      ],
+      "required": true,
+      "is_reverse": true,
+      "is_trap": false,
+      "trap_type": null,
+      "trap_expected_answer": null,
+      "consistency_group": "service_satisfaction",
+      "source_item_id": "Q1"
+    },
+    {
+      "item_id": "Q3",
+      "question": "우리 서비스의 사용 편의성에 대해 어떻게 평가하십니까?",
+      "option_type": "single_choice",
+      "options": [
+        "매우 불편하다",
+        "불편하다",
+        "보통이다",
+        "편리하다",
+        "매우 편리하다"
+      ],
+      "required": true,
+      "is_reverse": false,
+      "is_trap": false,
+      "trap_type": null,
+      "trap_expected_answer": null,
+      "consistency_group": "usability",
+      "source_item_id": null
+    },
+    {
+      "item_id": "Q4",
+      "question": "우리 서비스는 사용하기 편리하다.",
+      "option_type": "single_choice",
+      "options": [
+        "전혀 그렇지 않다",
+        "그렇지 않다",
+        "보통이다",
+        "그렇다",
+        "매우 그렇다"
+      ],
+      "required": true,
+      "is_reverse": false,
+      "is_trap": false,
+      "trap_type": null,
+      "trap_expected_answer": null,
+      "consistency_group": "usability",
+      "source_item_id": "Q3"
+    },
+    {
+      "item_id": "Q5",
+      "question": "이 문항은 주의 확인용입니다. 2번을 선택해 주세요.",
+      "option_type": "single_choice",
+      "options": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "required": true,
+      "is_reverse": false,
+      "is_trap": true,
+      "trap_type": "instruction",
+      "trap_expected_answer": 2,
+      "consistency_group": null,
+      "source_item_id": null
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+[연구 및 모델 고도화 단계]
+
+1. threshold 튜닝
+- reverse inconsistency 기준 조정
+- variance threshold 조정
+- straightlining 기준 개선
+
+2. feature 개선
+- consistency pair 1:1 매칭
+- pattern 비율 기반 판단
+- 문항 유형별 다른 기준 적용
+
+3. 통계 기반 보정 추가
+- item별 평균 응답 시간
+- 응답 분산
+- 개인별 패턴 deviation
+- residual 기반 점수
+
+4. 응답 품질 라벨링
+- good / bad / suspicious 기준 정의
+- threshold 기반 자동 라벨링
+
+5. 설문 구조 실험
+- 함정문항 유무 비교
+- 역문항 효과 분석
+- 문항 수 vs 신뢰도 관계 분석
+
+6. 모델 결합 (선택)
+- rule score + 통계 score 결합
+- rule + LLM 결합 가능성 탐색
+
+7. 논문화 / 캡스톤 정리
+- 시스템 구조 설명
+- feature 정의
+- 실험 결과
+- 성능 비교
