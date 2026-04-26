@@ -8,6 +8,7 @@
 ## 실행
 
 ```bash
+cd frontend
 npm install
 npm run dev
 ```
@@ -15,6 +16,7 @@ npm run dev
 ## 빌드
 
 ```bash
+git status
 npm run build
 ```
 
