@@ -1,0 +1,14 @@
+# Runtime dependencies for the FastAPI backend.
+#
+# Install from the backend directory:
+#   cd backend
+#   python -m venv .venv
+#   .\.venv\Scripts\activate
+#   python -m pip install -r requirements.txt
+
+fastapi==0.136.1
+uvicorn==0.46.0
+SQLAlchemy==2.0.49
+pydantic==2.13.3
+python-dotenv==1.2.2
+openai==2.32.0
