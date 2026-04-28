@@ -3,6 +3,7 @@ import { AppShell } from './layout/AppShell'
 import { DashboardPage } from './pages/DashboardPage'
 import { GuidePage } from './pages/GuidePage'
 import { ResultsPage } from './pages/ResultsPage'
+import { SurveyRespondPage } from './pages/SurveyRespondPage'
 import { SurveyEditorPage } from './pages/SurveyEditorPage'
 
 function App() {
@@ -12,6 +13,7 @@ function App() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/survey/create" element={<SurveyEditorPage mode="create" />} />
         <Route path="/survey/:id/edit" element={<SurveyEditorPage mode="edit" />} />
+        <Route path="/survey/:id/respond" element={<SurveyRespondPage />} />
         <Route path="/survey/:id/results" element={<ResultsPage />} />
         <Route path="/guide" element={<GuidePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

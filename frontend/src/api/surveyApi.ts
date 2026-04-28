@@ -8,8 +8,13 @@ import {
   mockPredictCitc,
 } from './mock/surveyMock'
 import type {
+  BackendSurveyCreatePayload,
+  BackendSurveyItem,
+  BackendSurveyItemOption,
+  BackendSurveyResponse,
   CitcPredictRequest,
   CitcPredictResponse,
+  ConstructEvaluationResponse,
   EvaluateItemQualityRequest,
   GenerateReverseRequest,
   GenerateReverseResponse,
@@ -17,110 +22,264 @@ import type {
   GenerateTrapResponse,
   ItemQualityResult,
   ItemStatsResponse,
+  QualityEvaluationResponse,
+  StatisticsEvaluationResponse,
   SurveyReliabilityResponse,
+  SurveyResponseSubmitPayload,
+  SurveyResponseSubmitResult,
 } from '../types/survey'
 
-/**
- * [evaluateItemQuality]
- * 설명: 설문 문항 텍스트의 품질 점수, 문제 어휘, 대체 문항 추천을 조회한다.
- * 엔드포인트: POST /api/item/quality
- * 요청 타입: EvaluateItemQualityRequest
- * 응답 타입: ItemQualityResult
- * 백엔드 담당자 확인 필요 항목: score 범위는 0~100, flaggedWords는 원문 내 하이라이트 가능한 문자열이어야 함.
- */
+export const DEFAULT_LIKERT_5_OPTIONS = [
+  '전혀 그렇지 않다',
+  '그렇지 않다',
+  '보통이다',
+  '그렇다',
+  '매우 그렇다',
+]
+
+export const responseResultStorageKey = (surveyId: string) =>
+  `survey-response-result:${surveyId}`
+
+const createMockId = (prefix: string) =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? `${prefix}-${crypto.randomUUID()}`
+    : `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+const buildMockOptions = (itemId: string): BackendSurveyItemOption[] =>
+  DEFAULT_LIKERT_5_OPTIONS.map((label, index) => ({
+    option_id: `${itemId}-option-${index + 1}`,
+    option_order: index + 1,
+    option_label: label,
+    option_score: index + 1,
+  }))
+
+function buildMockSurvey(payload: BackendSurveyCreatePayload): BackendSurveyResponse {
+  const surveyId = createMockId('survey')
+  const items: BackendSurveyItem[] = payload.items.map((item, index) => {
+    const itemId = createMockId('item')
+
+    return {
+      item_id: itemId,
+      item_order: index + 1,
+      question_text: item.question_text,
+      question_type: item.question_type,
+      item_role: 'normal',
+      is_generated: false,
+      source_item_id: null,
+      trap_correct_option_order: null,
+      reverse_expected_rule: null,
+      insert_after_index: null,
+      options: item.options?.length
+        ? item.options.map((option) => ({
+            option_id: `${itemId}-option-${option.option_order}`,
+            option_order: option.option_order,
+            option_label: option.option_label,
+            option_score: option.option_order,
+          }))
+        : buildMockOptions(itemId),
+    }
+  })
+
+  return {
+    survey_id: surveyId,
+    title: payload.title,
+    description: payload.description ?? null,
+    construct_name: payload.construct_name ?? null,
+    construct_description: payload.construct_description ?? null,
+    status: 'draft',
+    items,
+    message: 'mock survey created',
+  }
+}
+
+function getMockSurveyStorageKey(surveyId: string) {
+  return `mock-survey:${surveyId}`
+}
+
+export function saveResponseResultToStorage(
+  surveyId: string,
+  result: SurveyResponseSubmitResult,
+) {
+  window.localStorage.setItem(responseResultStorageKey(surveyId), JSON.stringify(result))
+}
+
+export function readResponseResultFromStorage(surveyId: string) {
+  const raw = window.localStorage.getItem(responseResultStorageKey(surveyId))
+  if (!raw) {
+    return null
+  }
+
+  try {
+    return JSON.parse(raw) as SurveyResponseSubmitResult
+  } catch {
+    return null
+  }
+}
+
+export async function createSurvey(
+  payload: BackendSurveyCreatePayload,
+): Promise<BackendSurveyResponse> {
+  if (useMockApi) {
+    const survey = buildMockSurvey(payload)
+    window.localStorage.setItem(getMockSurveyStorageKey(survey.survey_id), JSON.stringify(survey))
+    return survey
+  }
+
+  const { data } = await http.post<BackendSurveyResponse>('/surveys/', payload)
+  return data
+}
+
+export async function getSurvey(surveyId: string): Promise<BackendSurveyResponse> {
+  if (useMockApi) {
+    const raw = window.localStorage.getItem(getMockSurveyStorageKey(surveyId))
+
+    if (!raw) {
+      throw new Error('Mock survey not found')
+    }
+
+    return JSON.parse(raw) as BackendSurveyResponse
+  }
+
+  const { data } = await http.get<BackendSurveyResponse>(`/surveys/${surveyId}`)
+  return data
+}
+
+export async function submitSurveyResponse(
+  surveyId: string,
+  payload: SurveyResponseSubmitPayload,
+): Promise<SurveyResponseSubmitResult> {
+  if (useMockApi) {
+    const itemCount = payload.log.item_logs.length || 1
+    const tooFastRatio =
+      payload.log.item_logs.filter((item) => item.item_time_ms < 1500).length / itemCount
+    const changeRatio =
+      payload.log.item_logs.filter((item) => item.answer_changed).length / itemCount
+    const revisitRatio =
+      payload.log.item_logs.filter((item) => item.is_revisited).length / itemCount
+    const score = Math.max(
+      0,
+      Math.round(100 - tooFastRatio * 35 - changeRatio * 12 - revisitRatio * 8),
+    )
+    const status = score >= 75 ? 'good' : score >= 55 ? 'warning' : 'bad'
+
+    const result: SurveyResponseSubmitResult = {
+      response_id: createMockId('response'),
+      survey_id: surveyId,
+      response_feature_id: createMockId('feature'),
+      log_features: { ...payload.log },
+      content_features: {},
+      population_features: {},
+      relation_features: {},
+      features: {
+        avg_item_time_ms: payload.log.total_time_ms / itemCount,
+        too_fast_item_ratio: tooFastRatio,
+        answer_changed_ratio: changeRatio,
+        revisit_item_ratio: revisitRatio,
+        connection_lost: payload.log.connection_lost ? 1 : 0,
+        offline_ratio:
+          payload.log.total_time_ms > 0 ? payload.log.offline_total_ms / payload.log.total_time_ms : 0,
+        item_count: itemCount,
+        reliability_score: score,
+        reliability_status: status,
+      },
+      reliability: {
+        score,
+        status,
+        reasons: ['mock response log was processed locally'],
+      },
+      message: 'mock response and features created',
+    }
+
+    saveResponseResultToStorage(surveyId, result)
+    return result
+  }
+
+  const { data } = await http.post<SurveyResponseSubmitResult>(
+    `/surveys/${surveyId}/responses`,
+    payload,
+  )
+  saveResponseResultToStorage(surveyId, data)
+  return data
+}
+
+export async function evaluateSurveyQuality(
+  surveyId: string,
+): Promise<QualityEvaluationResponse> {
+  const { data } = await http.post<QualityEvaluationResponse>(
+    `/survey-evaluations/${surveyId}/quality`,
+  )
+  return data
+}
+
+export async function getSurveyQuality(
+  surveyId: string,
+): Promise<QualityEvaluationResponse> {
+  const { data } = await http.get<QualityEvaluationResponse>(
+    `/survey-evaluations/${surveyId}/quality`,
+  )
+  return data
+}
+
+export async function evaluateSurveyConstruct(
+  surveyId: string,
+): Promise<ConstructEvaluationResponse> {
+  const { data } = await http.post<ConstructEvaluationResponse>(
+    `/survey-evaluations/${surveyId}/construct`,
+  )
+  return data
+}
+
+export async function getSurveyConstruct(
+  surveyId: string,
+): Promise<ConstructEvaluationResponse> {
+  const { data } = await http.get<ConstructEvaluationResponse>(
+    `/survey-evaluations/${surveyId}/construct`,
+  )
+  return data
+}
+
+export async function evaluateSurveyStatistics(
+  surveyId: string,
+): Promise<StatisticsEvaluationResponse> {
+  const { data } = await http.post<StatisticsEvaluationResponse>(
+    `/survey-evaluations/${surveyId}/statistics`,
+  )
+  return data
+}
+
+export async function getSurveyStatistics(
+  surveyId: string,
+): Promise<StatisticsEvaluationResponse> {
+  const { data } = await http.get<StatisticsEvaluationResponse>(
+    `/survey-evaluations/${surveyId}/statistics`,
+  )
+  return data
+}
+
 export async function evaluateItemQuality(
   request: EvaluateItemQualityRequest,
 ): Promise<ItemQualityResult> {
-  if (useMockApi) {
-    return mockEvaluateItemQuality(request)
-  }
-
-  // [API 연동 필요 - 문항 품질 평가]
-  // 엔드포인트: POST /api/item/quality
-  // 요청: { text: string }
-  // 응답: { score: number, flaggedWords: string[], suggestion: string | null }
-  const { data } = await http.post<ItemQualityResult>('/api/item/quality', request)
-  return data
+  return mockEvaluateItemQuality(request)
 }
 
-/**
- * [predictSurveyCitc]
- * 설명: 설문 전체 문항의 CITC 예측 점수와 보조 점수를 조회한다.
- * 엔드포인트: POST /api/survey/citc-predict
- * 요청 타입: CitcPredictRequest
- * 응답 타입: CitcPredictResponse
- * 백엔드 담당자 확인 필요 항목: citcScore = a * embeddingScore + b * llmScore, a+b=1 가중치 공유 필요.
- */
 export async function predictSurveyCitc(
   request: CitcPredictRequest,
 ): Promise<CitcPredictResponse> {
-  if (useMockApi) {
-    return mockPredictCitc(request)
-  }
-
-  // [API 연동 필요 - CITC 예측]
-  // 엔드포인트: POST /api/survey/citc-predict
-  // 요청: { items: { id: string, text: string }[] }
-  // 응답: { results: { id: string, citcScore: number, embeddingScore: number, llmScore: number }[] }
-  // 내부 로직: citcScore = a * embeddingScore + b * llmScore (가중합, a+b=1)
-  const { data } = await http.post<CitcPredictResponse>('/api/survey/citc-predict', request)
-  return data
+  return mockPredictCitc(request)
 }
 
-/**
- * [generateTrapItem]
- * 설명: 설문 맥락과 기존 문항 목록을 기반으로 함정 문항을 생성한다.
- * 엔드포인트: POST /api/item/generate-trap
- * 요청 타입: GenerateTrapRequest
- * 응답 타입: GenerateTrapResponse
- * 백엔드 담당자 확인 필요 항목: suggestedPosition은 0 기반 index인지 1 기반 순서인지 프론트와 합의 필요.
- */
 export async function generateTrapItem(
   request: GenerateTrapRequest,
 ): Promise<GenerateTrapResponse> {
-  if (useMockApi) {
-    return mockGenerateTrapItem(request)
-  }
-
-  // [API 연동 필요 - 함정 문항 생성]
-  // 엔드포인트: POST /api/item/generate-trap
-  // 요청: { surveyContext: string, items: string[] }
-  // 응답: { trapItem: string, suggestedPosition: number }
-  const { data } = await http.post<GenerateTrapResponse>('/api/item/generate-trap', request)
-  return data
+  return mockGenerateTrapItem(request)
 }
 
-/**
- * [generateReverseItem]
- * 설명: 선택된 원문 문항을 기반으로 역문항을 생성한다.
- * 엔드포인트: POST /api/item/generate-reverse
- * 요청 타입: GenerateReverseRequest
- * 응답 타입: GenerateReverseResponse
- * 백엔드 담당자 확인 필요 항목: 의미 반전은 유지하되 부정 표현이 과도하게 복잡해지지 않도록 검수 기준 필요.
- */
 export async function generateReverseItem(
   request: GenerateReverseRequest,
 ): Promise<GenerateReverseResponse> {
-  if (useMockApi) {
-    return mockGenerateReverseItem(request)
-  }
-
-  // [API 연동 필요 - 역문항 생성]
-  // 엔드포인트: POST /api/item/generate-reverse
-  // 요청: { originalItem: string }
-  // 응답: { reverseItem: string }
-  const { data } = await http.post<GenerateReverseResponse>('/api/item/generate-reverse', request)
-  return data
+  return mockGenerateReverseItem(request)
 }
 
-/**
- * [getSurveyReliability]
- * 설명: 설문별 응답자의 신뢰도 점수와 응답 로그 요약을 조회한다.
- * 엔드포인트: GET /api/survey/:id/reliability
- * 요청 타입: surveyId(path param)
- * 응답 타입: SurveyReliabilityResponse
- * 백엔드 담당자 확인 필요 항목: timePerItem 단위는 초로 통일.
- */
 export async function getSurveyReliability(
   surveyId: string,
 ): Promise<SurveyReliabilityResponse> {
@@ -128,32 +287,43 @@ export async function getSurveyReliability(
     return mockGetSurveyReliability()
   }
 
-  // [API 연동 필요 - 응답 신뢰도 데이터]
-  // 엔드포인트: GET /api/survey/:id/reliability
-  // 응답: { respondents: { id: string, reliabilityScore: number, timePerItem: number[], flagged: boolean }[] }
-  // 신뢰도 계산 로직 (백엔드): 로그 데이터 + 함정/역문항 결과 + 평균 편차
-  const { data } = await http.get<SurveyReliabilityResponse>(
-    `/api/survey/${surveyId}/reliability`,
-  )
-  return data
+  const stored = readResponseResultFromStorage(surveyId)
+
+  if (!stored?.reliability) {
+    return { respondents: [] }
+  }
+
+  return {
+    respondents: [
+      {
+        id: stored.response_id,
+        submittedAt: new Date().toISOString(),
+        reliabilityScore: stored.reliability.score,
+        timePerItem: [Number(stored.features.avg_item_time_ms ?? 0) / 1000],
+        flagged: stored.reliability.status === 'bad',
+        reason: stored.reliability.reasons.join(', '),
+      },
+    ],
+  }
 }
 
-/**
- * [getSurveyItemStats]
- * 설명: 설문별 문항 통계와 응답 분포 데이터를 조회한다.
- * 엔드포인트: GET /api/survey/:id/item-stats
- * 요청 타입: surveyId(path param)
- * 응답 타입: ItemStatsResponse
- * 백엔드 담당자 확인 필요 항목: distribution 배열 index가 척도값과 매칭되는 방식 정의 필요.
- */
 export async function getSurveyItemStats(surveyId: string): Promise<ItemStatsResponse> {
   if (useMockApi) {
     return mockGetSurveyItemStats()
   }
 
-  // [API 연동 필요 - 문항별 통계]
-  // 엔드포인트: GET /api/survey/:id/item-stats
-  // 응답: { items: { itemId: string, text: string, mean: number, variance: number, count: number, missing: number, distribution: number[] }[] }
-  const { data } = await http.get<ItemStatsResponse>(`/api/survey/${surveyId}/item-stats`)
-  return data
+  const statistics = await getSurveyStatistics(surveyId)
+
+  return {
+    items:
+      statistics.items?.map((item) => ({
+        itemId: item.item_id,
+        text: item.question_text,
+        mean: item.citc ?? 0,
+        variance: item.alpha_if_item_deleted ?? 0,
+        count: statistics.response_count,
+        missing: 0,
+        distribution: [],
+      })) ?? [],
+  }
 }

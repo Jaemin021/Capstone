@@ -1,385 +1,721 @@
-/**
- * 페이지: 응답 통계 확인
- * 역할: 설문 응답의 신뢰도 분포, 문항별 통계, 응답자별 상태를 분석한다.
- * 주요 기능:
- *   - 상단 요약 카드
- *   - 응답 신뢰도 분포 차트
- *   - 문항별 통계 테이블 및 상세 분포 모달
- *   - 응답자 목록 필터링 및 상세 근거 모달
- * API 연동: /api/survey/:id/reliability, /api/survey/:id/item-stats
- */
-import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, Clock, Filter, ShieldCheck, Users, X } from 'lucide-react'
-import { useParams } from 'react-router-dom'
-import { getSurveyItemStats, getSurveyReliability } from '../api/surveyApi'
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  AlertTriangle,
+  BarChart3,
+  ChevronDown,
+  ClipboardCheck,
+  FileText,
+  ShieldCheck,
+} from 'lucide-react'
+import { useLocation, useParams } from 'react-router-dom'
+import {
+  evaluateSurveyConstruct,
+  evaluateSurveyQuality,
+  evaluateSurveyStatistics,
+  getSurvey,
+  getSurveyConstruct,
+  getSurveyQuality,
+  getSurveyStatistics,
+  readResponseResultFromStorage,
+} from '../api/surveyApi'
 import { LoadingSpinner } from '../components/LoadingSpinner'
 import { ReliabilityBadge } from '../components/ReliabilityBadge'
-import { StatChart, type ChartDataPoint } from '../components/StatChart'
+import { ScoreBar } from '../components/ScoreBar'
 import { useToastStore } from '../store/toastStore'
-import type { ItemStat, ReliabilityRespondent } from '../types/survey'
+import type {
+  CompactResponseFeatures,
+  ConstructEvaluationItem,
+  EvaluationStatus,
+  QualityEvaluationItem,
+  StatisticsEvaluationResponse,
+  SurveyResponseSubmitResult,
+} from '../types/survey'
 
-type ReliabilityFilter = 'all' | 'low' | 'medium' | 'high'
-
-function getReliabilityStatus(score: number) {
-  if (score >= 75) {
-    return '정상'
+function statusLabel(status?: EvaluationStatus) {
+  if (status === 'good') {
+    return '신뢰 가능'
   }
 
-  if (score >= 55) {
+  if (status === 'warning') {
     return '주의'
   }
 
-  return '불량'
+  if (status === 'bad') {
+    return '신뢰 낮음'
+  }
+
+  return '결과 없음'
 }
 
-function matchesFilter(score: number, filter: ReliabilityFilter) {
-  if (filter === 'all') {
-    return true
+function statusClassName(status?: EvaluationStatus) {
+  if (status === 'good') {
+    return 'bg-emerald-50 text-emerald-700 ring-emerald-200'
   }
 
-  if (filter === 'high') {
-    return score >= 75
+  if (status === 'warning') {
+    return 'bg-amber-50 text-amber-700 ring-amber-200'
   }
 
-  if (filter === 'medium') {
-    return score >= 55 && score < 75
+  if (status === 'bad') {
+    return 'bg-rose-50 text-rose-700 ring-rose-200'
   }
 
-  return score < 55
+  return 'bg-slate-100 text-slate-600 ring-slate-200'
 }
 
-function buildReliabilityDistribution(respondents: ReliabilityRespondent[]): ChartDataPoint[] {
-  const bins = [
-    { name: '0-39', min: 0, max: 39 },
-    { name: '40-59', min: 40, max: 59 },
-    { name: '60-79', min: 60, max: 79 },
-    { name: '80-100', min: 80, max: 100 },
+function DetailButton({
+  open,
+  onClick,
+  label = '자세히 보기',
+}: {
+  open: boolean
+  onClick: () => void
+  label?: string
+}) {
+  return (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+      onClick={onClick}
+    >
+      {open ? '접기' : label}
+      <ChevronDown size={16} className={open ? 'rotate-180 transition' : 'transition'} />
+    </button>
+  )
+}
+
+function numberFeature(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function formatDecimal(value: unknown, unit = '', maximumFractionDigits = 1) {
+  const number = numberFeature(value)
+
+  if (number == null) {
+    return '데이터 없음'
+  }
+
+  return `${number.toLocaleString('ko-KR', { maximumFractionDigits })}${unit}`
+}
+
+function formatMilliseconds(value: unknown) {
+  const ms = numberFeature(value)
+
+  if (ms == null) {
+    return '데이터 없음'
+  }
+
+  if (ms < 1000) {
+    return `${Math.round(ms).toLocaleString('ko-KR')}ms`
+  }
+
+  return `${(ms / 1000).toLocaleString('ko-KR', {
+    maximumFractionDigits: 1,
+  })}초`
+}
+
+function formatRatio(value: unknown) {
+  const ratio = numberFeature(value)
+
+  if (ratio == null) {
+    return '데이터 없음'
+  }
+
+  return `${(ratio * 100).toLocaleString('ko-KR', {
+    maximumFractionDigits: 1,
+  })}%`
+}
+
+function formatConnectionLost(value: unknown) {
+  const number = numberFeature(value)
+
+  if (number == null) {
+    return '데이터 없음'
+  }
+
+  return number > 0 ? '있음' : '없음'
+}
+
+function ResponseFeatureDetails({ features }: { features?: CompactResponseFeatures }) {
+  if (!features) {
+    return (
+      <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+        제출된 응답 세부 정보가 아직 없습니다.
+      </p>
+    )
+  }
+
+  const groups = [
+    {
+      title: '응답 시간',
+      description: '문항을 읽고 선택하는 데 걸린 시간을 봅니다.',
+      items: [
+        { label: '문항당 평균 응답 시간', value: formatMilliseconds(features.avg_item_time_ms) },
+        {
+          label: '너무 빠르게 응답한 문항',
+          value: formatRatio(features.too_fast_item_ratio),
+        },
+        {
+          label: '첫 선택까지 평균 시간',
+          value: formatMilliseconds(features.mean_time_to_first_answer_ms),
+        },
+        {
+          label: '첫 선택까지 최단 시간',
+          value: formatMilliseconds(features.min_time_to_first_answer_ms),
+        },
+        {
+          label: '마지막 선택 후 이동까지 평균 시간',
+          value: formatMilliseconds(features.mean_time_after_last_answer_ms),
+        },
+      ],
+    },
+    {
+      title: '수정 및 재방문',
+      description: '답을 바꾸거나 이전 문항으로 돌아간 흔적을 봅니다.',
+      items: [
+        { label: '문항당 평균 클릭/터치', value: formatDecimal(features.avg_touch_per_item, '회') },
+        { label: '문항당 평균 답변 수정', value: formatDecimal(features.mean_change_count, '회') },
+        { label: '전체 답변 수정 횟수', value: formatDecimal(features.total_change_count, '회', 0) },
+        { label: '문항당 평균 방문 횟수', value: formatDecimal(features.mean_visit_count, '회') },
+        {
+          label: '문항당 평균 뒤로가기 방문',
+          value: formatDecimal(features.mean_back_visit_count, '회'),
+        },
+        { label: '전체 뒤로가기 횟수', value: formatDecimal(features.total_back_visit_count, '회', 0) },
+        { label: '재방문 문항 비율', value: formatRatio(features.revisit_item_ratio) },
+        { label: '답변 변경 문항 비율', value: formatRatio(features.answer_changed_ratio) },
+        {
+          label: '재방문 후 수정 비율',
+          value: formatRatio(features.changed_after_revisit_ratio),
+        },
+        { label: '평균 재방문 시간', value: formatMilliseconds(features.mean_revisit_time_ms) },
+        { label: '최대 재방문 시간', value: formatMilliseconds(features.max_revisit_time_ms) },
+      ],
+    },
+    {
+      title: '연결 및 검증',
+      description: '네트워크 상태와 함정/역문항 관련 신호를 봅니다.',
+      items: [
+        { label: '오프라인 비율', value: formatRatio(features.offline_ratio) },
+        { label: '응답 중 연결 끊김', value: formatConnectionLost(features.connection_lost) },
+        { label: '함정 문항 실패 비율', value: formatRatio(features.trap_fail_ratio) },
+        { label: '역문항 평균 차이', value: formatDecimal(features.reverse_avg_diff) },
+        {
+          label: '역문항 일관성 점수',
+          value: formatRatio(features.reverse_consistency_score),
+        },
+        { label: '응답 시간 패턴 편차', value: formatDecimal(features.time_curve_deviation) },
+        { label: '비교 응답 표본 수', value: formatDecimal(features.population_sample_count, '명', 0) },
+        { label: '분석 문항 수', value: formatDecimal(features.item_count, '개', 0) },
+      ],
+    },
   ]
 
-  return bins.map((bin) => ({
-    name: bin.name,
-    value: respondents.filter(
-      (respondent) =>
-        respondent.reliabilityScore >= bin.min && respondent.reliabilityScore <= bin.max,
-    ).length,
-  }))
+  return (
+    <div className="grid gap-3 lg:grid-cols-3">
+      {groups.map((group) => (
+        <article key={group.title} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <h3 className="text-sm font-black text-slate-950">{group.title}</h3>
+          <p className="mt-1 text-xs leading-5 text-slate-500">{group.description}</p>
+          <dl className="mt-4 space-y-3">
+            {group.items.map((item) => (
+              <div
+                key={item.label}
+                className="flex items-start justify-between gap-3 border-t border-slate-200 pt-3 first:border-t-0 first:pt-0"
+              >
+                <dt className="text-sm font-semibold leading-5 text-slate-600">{item.label}</dt>
+                <dd className="shrink-0 text-right text-sm font-black text-slate-950">
+                  {item.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </article>
+      ))}
+    </div>
+  )
 }
 
-function distributionToChartData(distribution: number[]): ChartDataPoint[] {
-  return distribution.map((value, index) => ({
-    name: `${index + 1}점`,
-    value,
-  }))
+function QualityRow({
+  item,
+  open,
+  onToggle,
+}: {
+  item: QualityEvaluationItem
+  open: boolean
+  onToggle: () => void
+}) {
+  const problem = item.status === 'warning' || item.status === 'bad'
+
+  return (
+    <article
+      className={`rounded-lg border p-4 ${
+        problem ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-white'
+      }`}
+    >
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-black text-slate-700">
+              Q{item.item_order}
+            </span>
+            <span
+              className={`rounded-md px-2 py-1 text-xs font-black ring-1 ${statusClassName(
+                item.status,
+              )}`}
+            >
+              {item.status}
+            </span>
+            <span className="text-sm font-black text-slate-900">
+              {item.quality_score == null ? '점수 없음' : `${item.quality_score}/10`}
+            </span>
+          </div>
+          <p className="text-sm leading-6 text-slate-800">{item.question_text}</p>
+        </div>
+        {(item.llm_comment || item.suggested_rewrite) && problem ? (
+          <DetailButton open={open} onClick={onToggle} label="수정 제안 보기" />
+        ) : null}
+      </div>
+
+      {open ? (
+        <div className="mt-4 space-y-3 rounded-lg border border-white bg-white p-4 text-sm leading-6 text-slate-700">
+          {item.llm_comment ? (
+            <div>
+              <p className="font-black text-slate-900">LLM 코멘트</p>
+              <p className="mt-1">{item.llm_comment}</p>
+            </div>
+          ) : null}
+          {item.suggested_rewrite ? (
+            <div>
+              <p className="font-black text-slate-900">수정 제안</p>
+              <p className="mt-1 rounded-md bg-teal-50 p-3 font-semibold text-teal-900">
+                {item.suggested_rewrite}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
+  )
 }
 
-export function ResultsPage() {
-  const { id = 'demo' } = useParams()
-  const [filter, setFilter] = useState<ReliabilityFilter>('all')
-  const [selectedItemStat, setSelectedItemStat] = useState<ItemStat | null>(null)
-  const [selectedRespondent, setSelectedRespondent] = useState<ReliabilityRespondent | null>(null)
-  const { pushToast } = useToastStore()
+function ConstructRow({
+  item,
+  open,
+  onToggle,
+}: {
+  item: ConstructEvaluationItem
+  open: boolean
+  onToggle: () => void
+}) {
+  const status = item.status ?? 'unknown'
+  const features = item.llm_features ?? {}
+  const reason = typeof features.reason === 'string' ? features.reason : null
+  const suggestion = typeof features.suggestion === 'string' ? features.suggestion : null
 
-  const reliabilityQuery = useQuery({
-    queryKey: ['survey-reliability', id],
-    queryFn: () => getSurveyReliability(id),
-  })
+  return (
+    <article className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-black text-slate-700">
+              Q{item.item_order}
+            </span>
+            <span className={`rounded-md px-2 py-1 text-xs font-black ring-1 ${statusClassName(status)}`}>
+              {status}
+            </span>
+            {item.combined_score != null ? (
+              <span className="text-sm font-black text-slate-900">
+                {item.combined_score.toFixed(2)}/10
+              </span>
+            ) : null}
+          </div>
+          <p className="text-sm leading-6 text-slate-800">{item.question_text}</p>
+        </div>
+        {reason || suggestion ? <DetailButton open={open} onClick={onToggle} /> : null}
+      </div>
 
-  const itemStatsQuery = useQuery({
-    queryKey: ['survey-item-stats', id],
-    queryFn: () => getSurveyItemStats(id),
-  })
-
-  useEffect(() => {
-    if (reliabilityQuery.isError || itemStatsQuery.isError) {
-      pushToast({
-        type: 'error',
-        title: '통계 데이터 조회 실패',
-        description: '백엔드 API 주소 또는 응답 타입을 확인해 주세요.',
-      })
-    }
-  }, [itemStatsQuery.isError, pushToast, reliabilityQuery.isError])
-
-  const respondents = useMemo(
-    () => reliabilityQuery.data?.respondents ?? [],
-    [reliabilityQuery.data],
+      {open ? (
+        <div className="mt-4 space-y-3 rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+          {reason ? (
+            <div>
+              <p className="font-black text-slate-900">판단 근거</p>
+              <p className="mt-1">{reason}</p>
+            </div>
+          ) : null}
+          {suggestion ? (
+            <div>
+              <p className="font-black text-slate-900">제안</p>
+              <p className="mt-1">{suggestion}</p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
   )
-  const itemStats = itemStatsQuery.data?.items ?? []
+}
 
-  const summary = useMemo(() => {
-    const total = respondents.length
-    const averageReliability =
-      total === 0
-        ? 0
-        : respondents.reduce((sum, respondent) => sum + respondent.reliabilityScore, 0) / total
-    const lowCount = respondents.filter((respondent) => respondent.reliabilityScore < 55).length
-    const averageTime =
-      total === 0
-        ? 0
-        : respondents.reduce(
-            (sum, respondent) =>
-              sum +
-              respondent.timePerItem.reduce((timeSum, time) => timeSum + time, 0) /
-                respondent.timePerItem.length,
-            0,
-          ) / total
-
-    return {
-      total,
-      averageReliability,
-      lowCount,
-      averageTime,
-    }
-  }, [respondents])
-
-  const filteredRespondents = respondents.filter((respondent) =>
-    matchesFilter(respondent.reliabilityScore, filter),
-  )
-  const reliabilityDistribution = buildReliabilityDistribution(respondents)
-
-  if (reliabilityQuery.isLoading || itemStatsQuery.isLoading) {
+function StatisticsPanel({ statistics }: { statistics?: StatisticsEvaluationResponse }) {
+  if (!statistics || statistics.result === null) {
     return (
-      <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-        <LoadingSpinner label="응답 통계를 불러오는 중" />
-      </section>
+      <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+        저장된 통계 분석 결과가 없습니다. 응답이 2개 이상 쌓인 뒤 통계 분석을 실행해 주세요.
+      </p>
+    )
+  }
+
+  if (statistics.error) {
+    return (
+      <p className="rounded-lg bg-amber-50 p-4 text-sm font-semibold leading-6 text-amber-900">
+        {statistics.error}
+      </p>
     )
   }
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <div>
-          <p className="text-sm font-bold text-teal-700">설문 ID: {id}</p>
-          <h1 className="mt-1 text-2xl font-black text-slate-950">응답 통계 확인</h1>
-          <p className="mt-1 text-sm text-slate-600">
-            응답 신뢰도와 문항별 통계를 함께 확인해 낮은 품질의 응답과 문항을 빠르게 찾습니다.
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-lg bg-slate-50 p-4">
+          <p className="text-xs font-black text-slate-500">응답 수</p>
+          <p className="mt-1 text-2xl font-black text-slate-950">{statistics.response_count}</p>
+        </div>
+        <div className="rounded-lg bg-slate-50 p-4">
+          <p className="text-xs font-black text-slate-500">Cronbach alpha</p>
+          <p className="mt-1 text-2xl font-black text-slate-950">
+            {statistics.cronbach_alpha == null ? '-' : statistics.cronbach_alpha}
           </p>
         </div>
-      </section>
-
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {[
-          {
-            label: '총 응답 수',
-            value: `${summary.total}명`,
-            icon: Users,
-          },
-          {
-            label: '평균 응답 신뢰도',
-            value: `${summary.averageReliability.toFixed(1)}점`,
-            icon: ShieldCheck,
-          },
-          {
-            label: '신뢰도 낮은 응답',
-            value: `${summary.lowCount}건`,
-            icon: AlertTriangle,
-          },
-          {
-            label: '평균 문항 소요 시간',
-            value: `${summary.averageTime.toFixed(1)}초`,
-            icon: Clock,
-          },
-        ].map((card) => {
-          const Icon = card.icon
-
-          return (
-            <article key={card.label} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-800">
-                {card.label === '평균 응답 신뢰도' ? (
-                  <ReliabilityBadge score={summary.averageReliability} showScore={false} />
-                ) : (
-                  <Icon size={20} />
-                )}
-              </div>
-              <p className="text-sm font-semibold text-slate-500">{card.label}</p>
-              <p className="mt-1 text-2xl font-black text-slate-950">{card.value}</p>
-            </article>
-          )
-        })}
-      </section>
-
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h2 className="text-lg font-black text-slate-950">응답 신뢰도 분포</h2>
-            <p className="mt-1 text-sm text-slate-600">점수 구간별 응답자 수를 막대 차트로 표시합니다.</p>
-          </div>
-          <div className="flex flex-wrap gap-2 text-xs font-bold">
-            <span className="rounded-md bg-rose-50 px-2 py-1 text-rose-700">낮음: 0-54</span>
-            <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-700">보통: 55-74</span>
-            <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700">높음: 75-100</span>
-          </div>
+        <div className="rounded-lg bg-slate-50 p-4">
+          <p className="text-xs font-black text-slate-500">상태</p>
+          <span
+            className={`mt-2 inline-flex rounded-md px-2 py-1 text-xs font-black ring-1 ${statusClassName(
+              statistics.alpha_status,
+            )}`}
+          >
+            {statistics.alpha_status ?? 'unknown'}
+          </span>
         </div>
-        <StatChart data={reliabilityDistribution} valueLabel="응답자 수" />
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left text-sm">
+          <thead>
+            <tr className="text-xs font-black uppercase text-slate-500">
+              <th className="border-b border-slate-200 px-3 py-2">문항</th>
+              <th className="border-b border-slate-200 px-3 py-2">CITC</th>
+              <th className="border-b border-slate-200 px-3 py-2">CITC 상태</th>
+              <th className="border-b border-slate-200 px-3 py-2">제거 시 alpha</th>
+            </tr>
+          </thead>
+          <tbody>
+            {statistics.items?.map((item) => {
+              const problem = item.citc_status === 'warning' || item.citc_status === 'bad'
+
+              return (
+                <tr key={item.item_id} className={problem ? 'bg-amber-50' : 'hover:bg-slate-50'}>
+                  <td className="border-b border-slate-100 px-3 py-3">
+                    <p className="font-black text-slate-800">Q{item.item_order}</p>
+                    <p className="mt-1 text-slate-600">{item.question_text}</p>
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-3">{item.citc ?? '-'}</td>
+                  <td className="border-b border-slate-100 px-3 py-3">
+                    {item.citc_status ?? 'unknown'}
+                  </td>
+                  <td className="border-b border-slate-100 px-3 py-3">
+                    {item.alpha_if_item_deleted ?? '-'}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+export function ResultsPage() {
+  const { id = 'demo' } = useParams()
+  const location = useLocation()
+  const queryClient = useQueryClient()
+  const { pushToast } = useToastStore()
+  const [responseDetailsOpen, setResponseDetailsOpen] = useState(false)
+  const [openQualityItemId, setOpenQualityItemId] = useState<string | null>(null)
+  const [openConstructItemId, setOpenConstructItemId] = useState<string | null>(null)
+
+  const responseResult =
+    (location.state as { responseResult?: SurveyResponseSubmitResult } | null)?.responseResult ??
+    readResponseResultFromStorage(id)
+
+  const surveyQuery = useQuery({
+    queryKey: ['survey', id],
+    queryFn: () => getSurvey(id),
+    enabled: Boolean(id) && id !== 'demo',
+  })
+
+  const qualityQuery = useQuery({
+    queryKey: ['survey-quality', id],
+    queryFn: () => getSurveyQuality(id),
+    enabled: Boolean(id) && id !== 'demo',
+    retry: false,
+  })
+
+  const constructQuery = useQuery({
+    queryKey: ['survey-construct', id],
+    queryFn: () => getSurveyConstruct(id),
+    enabled: Boolean(id) && id !== 'demo',
+    retry: false,
+  })
+
+  const statisticsQuery = useQuery({
+    queryKey: ['survey-statistics', id],
+    queryFn: () => getSurveyStatistics(id),
+    enabled: Boolean(id) && id !== 'demo',
+    retry: false,
+  })
+
+  const qualityMutation = useMutation({
+    mutationFn: () => evaluateSurveyQuality(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['survey-quality', id] })
+      pushToast({ type: 'success', title: '문항 품질 평가 완료' })
+    },
+    onError: () => {
+      pushToast({
+        type: 'error',
+        title: '문항 품질 평가 실패',
+        description: 'OPENAI_API_KEY 또는 백엔드 로그를 확인해 주세요.',
+      })
+    },
+  })
+
+  const constructMutation = useMutation({
+    mutationFn: () => evaluateSurveyConstruct(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['survey-construct', id] })
+      pushToast({ type: 'success', title: '문항 구성 타당도 평가 완료' })
+    },
+    onError: () => {
+      pushToast({
+        type: 'error',
+        title: '문항 구성 타당도 평가 실패',
+        description: '실제 OpenAI API 키가 필요합니다.',
+      })
+    },
+  })
+
+  const statisticsMutation = useMutation({
+    mutationFn: () => evaluateSurveyStatistics(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['survey-statistics', id] })
+      pushToast({ type: 'success', title: '통계 분석 완료' })
+    },
+    onError: () => {
+      pushToast({
+        type: 'error',
+        title: '통계 분석 실패',
+        description: '응답 수가 충분한지 확인해 주세요.',
+      })
+    },
+  })
+
+  const qualityResults = qualityQuery.data?.results ?? []
+  const constructResults = constructQuery.data?.results ?? []
+  const problemQualityCount = qualityResults.filter(
+    (item) => item.status === 'warning' || item.status === 'bad',
+  ).length
+  const responseScore = responseResult?.reliability?.score ?? responseResult?.features.reliability_score
+  const responseStatus =
+    responseResult?.reliability?.status ?? responseResult?.features.reliability_status
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-sm font-bold text-teal-700">설문 ID: {id}</p>
+            <h1 className="mt-1 text-2xl font-black text-slate-950">
+              {surveyQuery.data?.title ?? '응답 및 평가 결과'}
+            </h1>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              기본 화면은 핵심 상태만 보여주고, 세부 feature와 LLM 코멘트는 펼쳐보기로 확인합니다.
+            </p>
+          </div>
+          {surveyQuery.isLoading ? <LoadingSpinner compact label="설문 조회 중" /> : null}
+        </div>
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-black text-slate-950">문항별 통계 테이블</h2>
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[760px] border-separate border-spacing-0 text-left text-sm">
-            <thead>
-              <tr className="text-xs font-bold uppercase text-slate-500">
-                <th className="border-b border-slate-200 px-3 py-2">문항 번호</th>
-                <th className="border-b border-slate-200 px-3 py-2">문항 텍스트</th>
-                <th className="border-b border-slate-200 px-3 py-2">평균</th>
-                <th className="border-b border-slate-200 px-3 py-2">분산</th>
-                <th className="border-b border-slate-200 px-3 py-2">응답 수</th>
-                <th className="border-b border-slate-200 px-3 py-2">결측 수</th>
-              </tr>
-            </thead>
-            <tbody>
-              {itemStats.map((item, index) => {
-                const varianceRisk = item.variance < 0.25 || item.variance > 1.2
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-teal-50 text-teal-700">
+              <ShieldCheck size={22} />
+            </div>
+            <div>
+              <h2 className="text-lg font-black text-slate-950">응답 신뢰도 요약</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                응답 제출 직후 백엔드가 계산한 feature를 기준으로 표시합니다.
+              </p>
+            </div>
+          </div>
+          {responseScore != null ? (
+            <ReliabilityBadge score={responseScore} showScore />
+          ) : (
+            <span className="rounded-md bg-slate-100 px-3 py-2 text-sm font-bold text-slate-600">
+              응답 결과 없음
+            </span>
+          )}
+        </div>
 
-                return (
-                  <tr
-                    key={item.itemId}
-                    className={varianceRisk ? 'bg-amber-50' : 'hover:bg-slate-50'}
-                    onClick={() => setSelectedItemStat(item)}
-                  >
-                    <td className="border-b border-slate-100 px-3 py-3 font-bold text-slate-800">
-                      Q{index + 1}
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-3 text-slate-700">
-                      {item.text}
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-3">{item.mean}</td>
-                    <td className="border-b border-slate-100 px-3 py-3">
-                      <span className={varianceRisk ? 'font-black text-amber-700' : ''}>
-                        {item.variance}
-                      </span>
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-3">{item.count}</td>
-                    <td className="border-b border-slate-100 px-3 py-3">{item.missing}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        {responseScore != null ? (
+          <div className="mt-5 space-y-4">
+            <ScoreBar score={responseScore} label={`상태: ${statusLabel(responseStatus)}`} />
+            <DetailButton
+              open={responseDetailsOpen}
+              onClick={() => setResponseDetailsOpen((open) => !open)}
+            />
+            {responseDetailsOpen ? (
+              <ResponseFeatureDetails features={responseResult?.features} />
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-4 rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+            응답 화면에서 설문을 제출하면 이곳에 신뢰도 요약이 표시됩니다.
+          </p>
+        )}
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
+              <ClipboardCheck size={20} />
+            </div>
+            <div>
+              <h2 className="text-lg font-black text-slate-950">문항 품질 평가</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                warning/bad 문항만 강조하고, LLM 코멘트는 필요할 때만 펼칩니다.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-bold text-white hover:bg-teal-700 disabled:bg-slate-300"
+            disabled={qualityMutation.isPending}
+            onClick={() => qualityMutation.mutate()}
+          >
+            {qualityMutation.isPending ? <LoadingSpinner compact label="평가 중" /> : '문항 품질 평가'}
+          </button>
+        </div>
+
+        <p className="mb-4 text-sm font-bold text-slate-600">
+          문제 문항: {problemQualityCount}개 / 전체 {qualityResults.length}개
+        </p>
+
+        <div className="space-y-3">
+          {qualityResults.length > 0 ? (
+            qualityResults.map((item) => (
+              <QualityRow
+                key={item.item_id}
+                item={item}
+                open={openQualityItemId === item.item_id}
+                onToggle={() =>
+                  setOpenQualityItemId((current) =>
+                    current === item.item_id ? null : item.item_id,
+                  )
+                }
+              />
+            ))
+          ) : (
+            <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+              저장된 품질 평가 결과가 없습니다. 버튼을 눌러 백엔드 평가를 실행하세요.
+            </p>
+          )}
         </div>
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-lg font-black text-slate-950">응답자 목록</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              행을 클릭하면 신뢰도 산출 근거와 문항별 소요 시간을 확인합니다.
-            </p>
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
+              <FileText size={20} />
+            </div>
+            <div>
+              <h2 className="text-lg font-black text-slate-950">문항 구성 타당도 평가</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                이 문항이 설문 목적에 맞는지 상태 중심으로 확인합니다.
+              </p>
+            </div>
           </div>
-          <label className="inline-flex items-center gap-2 text-sm font-bold text-slate-700">
-            <Filter size={16} />
-            <select
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
-              value={filter}
-              onChange={(event) => setFilter(event.target.value as ReliabilityFilter)}
-            >
-              <option value="all">전체</option>
-              <option value="low">낮음</option>
-              <option value="medium">보통</option>
-              <option value="high">높음</option>
-            </select>
-          </label>
+          <button
+            type="button"
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
+            disabled={constructMutation.isPending}
+            onClick={() => constructMutation.mutate()}
+          >
+            {constructMutation.isPending ? (
+              <LoadingSpinner compact label="평가 중" />
+            ) : (
+              '문항 구성 타당도 평가'
+            )}
+          </button>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] border-separate border-spacing-0 text-left text-sm">
-            <thead>
-              <tr className="text-xs font-bold uppercase text-slate-500">
-                <th className="border-b border-slate-200 px-3 py-2">응답 ID</th>
-                <th className="border-b border-slate-200 px-3 py-2">응답 일시</th>
-                <th className="border-b border-slate-200 px-3 py-2">소요 시간</th>
-                <th className="border-b border-slate-200 px-3 py-2">신뢰도 점수</th>
-                <th className="border-b border-slate-200 px-3 py-2">상태</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRespondents.map((respondent) => {
-                const totalTime = respondent.timePerItem.reduce((sum, time) => sum + time, 0)
-
-                return (
-                  <tr
-                    key={respondent.id}
-                    className="hover:bg-slate-50"
-                    onClick={() => setSelectedRespondent(respondent)}
-                  >
-                    <td className="border-b border-slate-100 px-3 py-3 font-bold text-slate-800">
-                      {respondent.id}
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-3">{respondent.submittedAt}</td>
-                    <td className="border-b border-slate-100 px-3 py-3">{totalTime}초</td>
-                    <td className="border-b border-slate-100 px-3 py-3">
-                      <ReliabilityBadge score={respondent.reliabilityScore} />
-                    </td>
-                    <td className="border-b border-slate-100 px-3 py-3 font-bold">
-                      {getReliabilityStatus(respondent.reliabilityScore)}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        <div className="space-y-3">
+          {constructResults.length > 0 ? (
+            constructResults.map((item) => (
+              <ConstructRow
+                key={item.item_id}
+                item={item}
+                open={openConstructItemId === item.item_id}
+                onToggle={() =>
+                  setOpenConstructItemId((current) =>
+                    current === item.item_id ? null : item.item_id,
+                  )
+                }
+              />
+            ))
+          ) : (
+            <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+              저장된 construct 평가 결과가 없습니다. 실제 OpenAI API 키가 있을 때 실행하세요.
+            </p>
+          )}
         </div>
       </section>
 
-      {selectedItemStat ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4">
-          <section className="w-full max-w-2xl rounded-lg bg-white p-5 shadow-xl">
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-black text-slate-950">문항 응답 분포</h2>
-                <p className="mt-1 text-sm text-slate-600">{selectedItemStat.text}</p>
-              </div>
-              <button
-                type="button"
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-                aria-label="문항 통계 닫기"
-                onClick={() => setSelectedItemStat(null)}
-              >
-                <X size={18} />
-              </button>
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-800">
+              <BarChart3 size={20} />
             </div>
-            <StatChart data={distributionToChartData(selectedItemStat.distribution)} valueLabel="응답 수" />
-          </section>
+            <div>
+              <h2 className="text-lg font-black text-slate-950">통계 분석</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                응답이 충분히 쌓이면 Cronbach alpha와 문항별 CITC를 확인합니다.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:bg-slate-100"
+            disabled={statisticsMutation.isPending}
+            onClick={() => statisticsMutation.mutate()}
+          >
+            {statisticsMutation.isPending ? <LoadingSpinner compact label="분석 중" /> : '통계 분석'}
+          </button>
         </div>
-      ) : null}
 
-      {selectedRespondent ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4">
-          <section className="w-full max-w-xl rounded-lg bg-white p-5 shadow-xl">
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-black text-slate-950">응답자 상세</h2>
-                <p className="mt-1 text-sm text-slate-600">{selectedRespondent.id}</p>
-              </div>
-              <button
-                type="button"
-                className="rounded-md p-2 text-slate-500 hover:bg-slate-100"
-                aria-label="응답자 상세 닫기"
-                onClick={() => setSelectedRespondent(null)}
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="space-y-3 text-sm">
-              <div className="flex items-center justify-between rounded-lg bg-slate-50 p-3">
-                <span className="font-bold text-slate-600">신뢰도 점수</span>
-                <ReliabilityBadge score={selectedRespondent.reliabilityScore} />
-              </div>
-              <div className="rounded-lg bg-slate-50 p-3">
-                <p className="font-bold text-slate-600">산출 근거</p>
-                <p className="mt-1 leading-6 text-slate-700">{selectedRespondent.reason}</p>
-              </div>
-              <div className="rounded-lg bg-slate-50 p-3">
-                <p className="font-bold text-slate-600">문항별 소요 시간</p>
-                <p className="mt-1 text-slate-700">
-                  {selectedRespondent.timePerItem.map((time, index) => `Q${index + 1}: ${time}초`).join(' / ')}
-                </p>
-              </div>
-            </div>
-          </section>
-        </div>
-      ) : null}
+        {statisticsQuery.isError ? (
+          <div className="mb-4 flex items-center gap-2 rounded-lg bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+            <AlertTriangle size={18} />
+            통계 결과를 조회하지 못했습니다. 아직 분석 결과가 없을 수 있습니다.
+          </div>
+        ) : null}
+
+        <StatisticsPanel statistics={statisticsQuery.data} />
+      </section>
     </div>
   )
 }

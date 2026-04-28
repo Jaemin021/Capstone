@@ -11,7 +11,7 @@ API_KEY = os.getenv("OPENAI_API_KEY")
 EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 
 if not API_KEY:
-    raise ValueError("❌ OPENAI_API_KEY가 설정되지 않았습니다.")
+    raise ValueError("OPENAI_API_KEY is not configured.")
 
 client = OpenAI(api_key=API_KEY)
 

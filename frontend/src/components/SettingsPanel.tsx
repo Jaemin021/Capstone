@@ -68,6 +68,36 @@ export function SettingsPanel({
             />
           </label>
 
+          <label className="block">
+            <span className="mb-2 block text-sm font-semibold text-slate-700">설문 설명</span>
+            <textarea
+              className="min-h-20 w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+              value={settings.description ?? ''}
+              onChange={(event) => onChange({ description: event.target.value })}
+              placeholder="응답자에게 보여줄 간단한 설명을 입력하세요."
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-2 block text-sm font-semibold text-slate-700">Construct 이름</span>
+            <input
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+              value={settings.constructName ?? ''}
+              onChange={(event) => onChange({ constructName: event.target.value })}
+              placeholder="예: 서비스 사용성"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-2 block text-sm font-semibold text-slate-700">Construct 설명</span>
+            <textarea
+              className="min-h-24 w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+              value={settings.constructDescription ?? ''}
+              onChange={(event) => onChange({ constructDescription: event.target.value })}
+              placeholder="이 설문이 측정하려는 개념을 설명하세요."
+            />
+          </label>
+
           <div className="rounded-lg border border-slate-200 p-4">
             <label className="flex items-center justify-between gap-3">
               <span>

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type {
+  BackendSurveyResponse,
   CitcResult,
   ItemQualityResult,
   QuestionType,
@@ -25,6 +26,14 @@ const initialItems: SurveyItem[] = [
   },
 ]
 
+function fromBackendQuestionType(questionType: string): QuestionType {
+  if (questionType === 'likert_5') {
+    return 'likert-5'
+  }
+
+  return 'likert-5'
+}
+
 interface SurveyStore {
   items: SurveyItem[]
   selectedItemId: string | null
@@ -40,6 +49,7 @@ interface SurveyStore {
   setCitcResults: (results: CitcResult[]) => void
   toggleReverse: (id: string, checked: boolean) => void
   setSettings: (settings: Partial<SurveySettings>) => void
+  setItemsFromBackendSurvey: (survey: BackendSurveyResponse) => void
 }
 
 export const useSurveyStore = create<SurveyStore>((set, get) => ({
@@ -48,8 +58,11 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
   settings: {
     title: '응답 신뢰도 분석 설문',
     surveyContext: '디지털 서비스 사용성 만족도 조사',
-    trapEnabled: true,
-    reverseEnabled: true,
+    description: '',
+    constructName: '',
+    constructDescription: '',
+    trapEnabled: false,
+    reverseEnabled: false,
   },
   addItem: () => {
     const item: SurveyItem = {
@@ -145,4 +158,31 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
         ...settings,
       },
     })),
+  setItemsFromBackendSurvey: (survey) =>
+    set(() => {
+      const items = survey.items.map((item) => ({
+        id: item.item_id,
+        backendItemId: item.item_id,
+        text: item.question_text,
+        type: fromBackendQuestionType(item.question_type),
+        options: item.options.map((option) => option.option_label),
+        backendOptions: item.options,
+        isTrap: item.item_role === 'trap',
+        isReverse: item.item_role === 'reverse',
+      }))
+
+      return {
+        items,
+        selectedItemId: items[0]?.id ?? null,
+        settings: {
+          title: survey.title,
+          surveyContext: survey.construct_description ?? survey.description ?? '',
+          description: survey.description ?? '',
+          constructName: survey.construct_name ?? '',
+          constructDescription: survey.construct_description ?? '',
+          trapEnabled: false,
+          reverseEnabled: false,
+        },
+      }
+    }),
 }))

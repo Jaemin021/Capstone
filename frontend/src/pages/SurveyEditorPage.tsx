@@ -38,13 +38,16 @@ import {
   X,
 } from 'lucide-react'
 import { useForm } from 'react-hook-form'
-import { useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
+  DEFAULT_LIKERT_5_OPTIONS,
+  createSurvey,
   evaluateItemQuality,
   generateReverseItem,
   generateTrapItem,
   predictSurveyCitc,
 } from '../api/surveyApi'
+import { useMockApi } from '../api/http'
 import { ItemCard } from '../components/ItemCard'
 import { LoadingSpinner } from '../components/LoadingSpinner'
 import { ScoreBar } from '../components/ScoreBar'
@@ -52,7 +55,7 @@ import { SettingsPanel } from '../components/SettingsPanel'
 import { SuggestionModal } from '../components/SuggestionModal'
 import { useSurveyStore } from '../store/surveyStore'
 import { useToastStore } from '../store/toastStore'
-import type { QuestionType, SurveyItem } from '../types/survey'
+import type { BackendSurveyCreatePayload, QuestionType, SurveyItem } from '../types/survey'
 
 export interface SurveyEditorPageProps {
   mode: 'create' | 'edit'
@@ -69,6 +72,44 @@ const questionTypeOptions: { value: QuestionType; label: string }[] = [
   { value: 'multiple', label: '객관식' },
   { value: 'short', label: '주관식' },
 ]
+
+function toBackendQuestionType(type: QuestionType) {
+  if (type === 'likert-5') {
+    return 'likert_5'
+  }
+
+  return 'likert_5'
+}
+
+function emptyToNull(value?: string) {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : null
+}
+
+function buildSurveyCreatePayload(
+  settings: ReturnType<typeof useSurveyStore.getState>['settings'],
+  items: SurveyItem[],
+): BackendSurveyCreatePayload {
+  return {
+    title: settings.title.trim() || 'Untitled survey',
+    description: emptyToNull(settings.description),
+    construct_name: emptyToNull(settings.constructName),
+    construct_description: emptyToNull(settings.constructDescription || settings.surveyContext),
+    enable_validation_items: settings.trapEnabled || settings.reverseEnabled,
+    items: items
+      .filter((item) => item.text.trim().length > 0)
+      .map((item, index) => ({
+        item_order: index + 1,
+        question_text: item.text.trim(),
+        question_type: toBackendQuestionType(item.type),
+        is_required: true,
+        options: DEFAULT_LIKERT_5_OPTIONS.map((label, optionIndex) => ({
+          option_order: optionIndex + 1,
+          option_label: label,
+        })),
+      })),
+  }
+}
 
 function HighlightedText({ text, words }: { text: string; words: string[] }) {
   if (words.length === 0) {
@@ -143,6 +184,8 @@ function SortableQuestionCard({
 
 export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
   const { id } = useParams()
+  const navigate = useNavigate()
+  const [savedSurveyId, setSavedSurveyId] = useState<string | null>(id ?? null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [suggestionOpen, setSuggestionOpen] = useState(false)
@@ -161,6 +204,7 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
     setCitcResults,
     setSettings,
     reorderItems,
+    setItemsFromBackendSurvey,
   } = useSurveyStore()
 
   const selectedItem = useMemo(
@@ -182,6 +226,34 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
       type: selectedItem?.type ?? 'likert-5',
     })
   }, [reset, selectedItem])
+
+  const createSurveyMutation = useMutation({
+    mutationFn: () => {
+      const payload = buildSurveyCreatePayload(settings, items)
+
+      if (payload.items.length === 0) {
+        throw new Error('설문 문항을 1개 이상 입력해 주세요.')
+      }
+
+      return createSurvey(payload)
+    },
+    onSuccess: (survey) => {
+      setSavedSurveyId(survey.survey_id)
+      setItemsFromBackendSurvey(survey)
+      pushToast({
+        type: 'success',
+        title: '설문 생성 완료',
+        description: `백엔드 survey_id: ${survey.survey_id}`,
+      })
+    },
+    onError: (error) => {
+      pushToast({
+        type: 'error',
+        title: '설문 생성 실패',
+        description: error instanceof Error ? error.message : '백엔드 연결 또는 요청 형식을 확인해 주세요.',
+      })
+    },
+  })
 
   const qualityMutation = useMutation({
     mutationFn: evaluateItemQuality,
@@ -285,6 +357,15 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
   }
 
   const handleEvaluateQuality = () => {
+    if (!useMockApi) {
+      pushToast({
+        type: 'info',
+        title: '백엔드 평가는 결과 화면에서 실행합니다',
+        description: '설문을 생성한 뒤 결과 화면의 문항 품질 평가 버튼을 사용해 주세요.',
+      })
+      return
+    }
+
     if (!selectedItem) {
       return
     }
@@ -311,6 +392,15 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
   }
 
   const handlePredictCitc = () => {
+    if (!useMockApi) {
+      pushToast({
+        type: 'info',
+        title: '백엔드 construct 평가로 대체됩니다',
+        description: '설문 생성 후 결과 화면에서 문항 구성 타당도 평가를 실행해 주세요.',
+      })
+      return
+    }
+
     const validItems = items
       .filter((item) => item.text.trim().length > 0)
       .map((item) => ({ id: item.id, text: item.text.trim() }))
@@ -333,6 +423,15 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
   }
 
   const handleGenerateTrap = () => {
+    if (!useMockApi) {
+      pushToast({
+        type: 'info',
+        title: '자동 검증 문항은 설문 생성 시 처리됩니다',
+        description: '설정에서 옵션을 켠 뒤 설문 생성 버튼을 누르면 백엔드가 생성을 시도합니다.',
+      })
+      return
+    }
+
     // [API 연동 필요 - 함정 문항 생성]
     // 엔드포인트: POST /api/item/generate-trap
     // 요청: { surveyContext: string, items: string[] }
@@ -344,6 +443,15 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
   }
 
   const handleGenerateReverse = () => {
+    if (!useMockApi) {
+      pushToast({
+        type: 'info',
+        title: '자동 검증 문항은 설문 생성 시 처리됩니다',
+        description: '설정에서 옵션을 켠 뒤 설문 생성 버튼을 누르면 백엔드가 생성을 시도합니다.',
+      })
+      return
+    }
+
     if (!selectedItem) {
       return
     }
@@ -384,11 +492,7 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
   }
 
   const handleSaveDraft = () => {
-    pushToast({
-      type: 'success',
-      title: '저장 요청 준비 완료',
-      description: '현재는 mock 저장입니다. 저장 API가 정해지면 이 버튼에 연결하면 됩니다.',
-    })
+    createSurveyMutation.mutate()
   }
 
   const pageTitle = mode === 'edit' ? `설문지 편집 ${id ? `#${id}` : ''}` : '설문지 생성'
@@ -400,7 +504,7 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
           <div>
             <h1 className="text-2xl font-black text-slate-950">{pageTitle}</h1>
             <p className="mt-1 text-sm text-slate-600">
-              백엔드 연결 전에도 mock API로 문항 평가, CITC, 함정/역문항 흐름을 확인할 수 있습니다.
+              설문을 생성하면 백엔드에 저장되고, 생성된 survey_id로 응답 화면과 평가 화면을 확인할 수 있습니다.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -422,12 +526,30 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
             </button>
             <button
               type="button"
-              className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-3 py-2 text-sm font-bold text-white hover:bg-teal-700"
+              className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-3 py-2 text-sm font-bold text-white hover:bg-teal-700 disabled:bg-slate-300"
+              disabled={createSurveyMutation.isPending}
               onClick={handleSaveDraft}
             >
-              <Save size={16} />
-              저장
+              {createSurveyMutation.isPending ? <LoadingSpinner compact label="저장 중" /> : <Save size={16} />}
+              {createSurveyMutation.isPending ? null : '설문 생성'}
             </button>
+            {savedSurveyId ? (
+              <>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800"
+                  onClick={() => navigate(`/survey/${savedSurveyId}/respond`)}
+                >
+                  응답 화면
+                </button>
+                <Link
+                  to={`/survey/${savedSurveyId}/results`}
+                  className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                >
+                  결과 보기
+                </Link>
+              </>
+            ) : null}
           </div>
         </div>
       </section>

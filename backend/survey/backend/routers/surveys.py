@@ -11,7 +11,8 @@ from services.feature_service import (
     calculate_log_features,
     calculate_content_features,
     calculate_relation_features,
-    build_compact_features
+    build_compact_features,
+    calculate_reliability_summary
 )
 from services.population_feature_service import calculate_population_features
 
@@ -541,6 +542,7 @@ def create_response(survey_id: str, response: schemas.ResponseCreate):
         "population_features": population_features,
         "relation_features": relation_features,
         "features": compact_features,
+        "reliability": calculate_reliability_summary(compact_features),
         "message": "response and features created"
     }
 

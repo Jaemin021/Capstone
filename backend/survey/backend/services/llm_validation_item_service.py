@@ -16,7 +16,7 @@ API_KEY = os.getenv("OPENAI_API_KEY")
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 
 if not API_KEY:
-    raise ValueError("❌ OPENAI_API_KEY가 설정되지 않았습니다. .env 파일 확인하세요.")
+    raise ValueError("OPENAI_API_KEY is not configured. Check your .env file.")
 
 client = OpenAI(api_key=API_KEY)
 
@@ -265,5 +265,5 @@ def generate_validation_plan_with_llm(survey_data):
         return normalize_validation_plan(raw_plan, item_count)
 
     except Exception as e:
-        print("❌ LLM 실패:", e)
+        print("LLM validation plan failed:", repr(e))
         return default_validation_plan()

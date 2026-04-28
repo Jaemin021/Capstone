@@ -236,7 +236,7 @@ def calculate_content_features(answers, survey_items):
 
 
 def build_compact_features(log_f, content_f, relation_f, population_f):
-    return {
+    compact = {
         # 기존 log feature
         "avg_item_time_ms": log_f.get("avg_item_time_ms", 0),
         "too_fast_item_ratio": log_f.get("too_fast_item_ratio", 0),
@@ -295,6 +295,75 @@ def build_compact_features(log_f, content_f, relation_f, population_f):
         ),
 
         "item_count": log_f.get("item_count", 0)
+    }
+
+    reliability = calculate_reliability_summary(compact)
+    compact["reliability_score"] = reliability["score"]
+    compact["reliability_status"] = reliability["status"]
+
+    return compact
+
+
+def calculate_reliability_summary(features):
+    score = 100.0
+    reasons = []
+
+    too_fast_ratio = float(features.get("too_fast_item_ratio") or 0)
+    if too_fast_ratio > 0:
+        score -= min(35, too_fast_ratio * 35)
+        reasons.append("too_fast_item_ratio")
+
+    trap_fail_ratio = float(features.get("trap_fail_ratio") or 0)
+    if trap_fail_ratio > 0:
+        score -= min(30, trap_fail_ratio * 30)
+        reasons.append("trap_fail_ratio")
+
+    reverse_score = features.get("reverse_consistency_score")
+    if reverse_score is not None:
+        reverse_penalty = max(0, 1 - float(reverse_score)) * 20
+        if reverse_penalty > 0:
+            score -= min(20, reverse_penalty)
+            reasons.append("reverse_consistency")
+
+    if features.get("connection_lost"):
+        score -= 5
+        reasons.append("connection_lost")
+
+    offline_ratio = float(features.get("offline_ratio") or 0)
+    if offline_ratio > 0:
+        score -= min(10, offline_ratio * 20)
+        reasons.append("offline_ratio")
+
+    change_ratio = float(features.get("answer_changed_ratio") or 0)
+    if change_ratio > 0:
+        score -= min(10, change_ratio * 10)
+        reasons.append("answer_changed_ratio")
+
+    revisit_ratio = float(features.get("revisit_item_ratio") or 0)
+    if revisit_ratio > 0:
+        score -= min(8, revisit_ratio * 8)
+        reasons.append("revisit_item_ratio")
+
+    time_curve_deviation = features.get("time_curve_deviation")
+    if time_curve_deviation is not None:
+        deviation_penalty = min(12, float(time_curve_deviation) * 3)
+        if deviation_penalty > 0:
+            score -= deviation_penalty
+            reasons.append("time_curve_deviation")
+
+    final_score = round(max(0, min(100, score)), 1)
+
+    if final_score >= 75:
+        status = "good"
+    elif final_score >= 55:
+        status = "warning"
+    else:
+        status = "bad"
+
+    return {
+        "score": final_score,
+        "status": status,
+        "reasons": reasons
     }
 
 

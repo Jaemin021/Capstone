@@ -12,7 +12,7 @@ API_KEY = os.getenv("OPENAI_API_KEY")
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 
 if not API_KEY:
-    raise ValueError("❌ OPENAI_API_KEY가 설정되지 않았습니다.")
+    raise ValueError("OPENAI_API_KEY is not configured.")
 
 client = OpenAI(api_key=API_KEY)
 
@@ -122,7 +122,7 @@ construct_description: {survey.construct_description}
         return base
 
     except Exception as e:
-        print("❌ LLM construct evaluation 실패:", e)
+        print("LLM construct evaluation failed:", repr(e))
         return default_llm_construct_result()
 
 
