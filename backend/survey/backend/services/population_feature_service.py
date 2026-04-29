@@ -1,5 +1,6 @@
 import math
 import models
+from services.feature_service import should_exclude_from_statistics
 
 EPS = 0.03
 MIN_POPULATION_RESPONSES = 3
@@ -84,10 +85,24 @@ def calculate_population_features(db, survey_id, response_id):
         is_completed=True
     ).all()
 
+    response_feature_rows = db.query(models.ResponseFeature).filter_by(
+        survey_id=survey_id
+    ).all()
+
+    compact_feature_by_response = {
+        row.response_id: (row.compact_features or {})
+        for row in response_feature_rows
+    }
+
     population_vectors = []
 
     for response in responses:
         if response.response_id == response_id:
+            continue
+
+        compact_features = compact_feature_by_response.get(response.response_id) or {}
+        excluded, _ = should_exclude_from_statistics(compact_features)
+        if excluded:
             continue
 
         item_logs = db.query(models.ResponseItemLog).filter_by(

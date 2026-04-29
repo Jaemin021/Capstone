@@ -1,13 +1,3 @@
-/**
- * 페이지: 설문지 생성/편집
- * 역할: 설문 문항을 추가·편집하고 품질 평가를 받는 메인 편집 화면
- * 주요 기능:
- *   - 문항 CRUD 및 드래그앤드롭 정렬
- *   - 문항 품질 평가 API 호출 및 결과 표시
- *   - CITC 예측 점수 조회
- *   - 함정/역문항 생성 및 삽입
- * API 연동: /api/item/quality, /api/survey/citc-predict, /api/item/generate-trap, /api/item/generate-reverse
- */
 import { useEffect, useMemo, useState } from 'react'
 import {
   closestCenter,
@@ -23,61 +13,59 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useMutation } from '@tanstack/react-query'
-import {
-  AlertTriangle,
-  Eye,
-  GripVertical,
-  ListChecks,
-  Plus,
-  RefreshCcw,
-  Save,
-  Settings,
-  Sparkles,
-  Wand2,
-  X,
-} from 'lucide-react'
-import { useForm } from 'react-hook-form'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { Eye, GripVertical, Plus, Save, X } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import {
-  DEFAULT_LIKERT_5_OPTIONS,
-  createSurvey,
-  evaluateItemQuality,
-  generateReverseItem,
-  generateTrapItem,
-  predictSurveyCitc,
-} from '../api/surveyApi'
-import { useMockApi } from '../api/http'
+import { createSurvey, getSurvey, updateSurvey } from '../api/surveyApi'
 import { ItemCard } from '../components/ItemCard'
 import { LoadingSpinner } from '../components/LoadingSpinner'
-import { ScoreBar } from '../components/ScoreBar'
-import { SettingsPanel } from '../components/SettingsPanel'
-import { SuggestionModal } from '../components/SuggestionModal'
 import { useSurveyStore } from '../store/surveyStore'
 import { useToastStore } from '../store/toastStore'
-import type { BackendSurveyCreatePayload, QuestionType, SurveyItem } from '../types/survey'
+import type { BackendSurveyCreatePayload, SurveyItem } from '../types/survey'
 
 export interface SurveyEditorPageProps {
   mode: 'create' | 'edit'
 }
 
-interface QuestionFormValues {
-  text: string
-  type: QuestionType
+type SaveSurveyResult = {
+  survey: Awaited<ReturnType<typeof createSurvey>>
+  action: 'create' | 'update'
 }
 
-const questionTypeOptions: { value: QuestionType; label: string }[] = [
-  { value: 'likert-5', label: '리커트 척도 5점' },
-  { value: 'likert-7', label: '리커트 척도 7점' },
-  { value: 'multiple', label: '객관식' },
-  { value: 'short', label: '주관식' },
-]
-
-function toBackendQuestionType(type: QuestionType) {
-  if (type === 'likert-5') {
-    return 'likert_5'
+function getApiErrorMessage(error: unknown, fallback: string) {
+  if (typeof error !== 'object' || error === null) {
+    return fallback
   }
 
+  const response = (error as { response?: { data?: unknown } }).response
+  const data = response?.data
+
+  if (typeof data === 'string') {
+    return data
+  }
+
+  if (typeof data === 'object' && data !== null) {
+    const detail = (data as { detail?: unknown; error?: unknown; message?: unknown }).detail
+    const apiError = (data as { error?: unknown }).error
+    const message = (data as { message?: unknown }).message
+
+    if (typeof detail === 'string') {
+      return detail
+    }
+
+    if (typeof apiError === 'string') {
+      return apiError
+    }
+
+    if (typeof message === 'string') {
+      return message
+    }
+  }
+
+  return fallback
+}
+
+function toBackendQuestionType() {
   return 'likert_5'
 }
 
@@ -86,52 +74,68 @@ function emptyToNull(value?: string) {
   return trimmed ? trimmed : null
 }
 
-function buildSurveyCreatePayload(
-  settings: ReturnType<typeof useSurveyStore.getState>['settings'],
+function isEditableItem(item: SurveyItem) {
+  return !item.isTrap && !item.isReverse
+}
+
+function getEditableItems(items: SurveyItem[]) {
+  return items.filter(isEditableItem)
+}
+
+function validateSurveyForSave(
+  title: string,
+  surveyContext: string,
   items: SurveyItem[],
+) {
+  if (!title.trim()) {
+    return '설문 제목을 입력해 주세요.'
+  }
+
+  if (!surveyContext.trim()) {
+    return '설문 맥락을 입력해 주세요.'
+  }
+
+  const editableItems = getEditableItems(items)
+  const validItems = editableItems.filter((item) => item.text.trim().length > 0)
+
+  if (validItems.length === 0) {
+    return '설문 문항을 1개 이상 입력해 주세요.'
+  }
+
+  const optionIssue = validItems.findIndex((item) =>
+    item.options.slice(0, 5).some((option) => option.trim().length === 0),
+  )
+
+  if (optionIssue >= 0) {
+    return `Q${optionIssue + 1}의 보기 5개를 모두 입력해 주세요.`
+  }
+
+  return null
+}
+
+function buildSurveyPayload(
+  title: string,
+  surveyContext: string,
+  items: SurveyItem[],
+  enableValidationItems: boolean,
 ): BackendSurveyCreatePayload {
   return {
-    title: settings.title.trim() || 'Untitled survey',
-    description: emptyToNull(settings.description),
-    construct_name: emptyToNull(settings.constructName),
-    construct_description: emptyToNull(settings.constructDescription || settings.surveyContext),
-    enable_validation_items: settings.trapEnabled || settings.reverseEnabled,
-    items: items
+    title: title.trim(),
+    description: emptyToNull(surveyContext),
+    enable_validation_items: enableValidationItems,
+    items: getEditableItems(items)
       .filter((item) => item.text.trim().length > 0)
       .map((item, index) => ({
         item_order: index + 1,
         question_text: item.text.trim(),
-        question_type: toBackendQuestionType(item.type),
+        question_type: toBackendQuestionType(),
         is_required: true,
-        options: DEFAULT_LIKERT_5_OPTIONS.map((label, optionIndex) => ({
+        options: item.options.slice(0, 5).map((label, optionIndex) => ({
           option_order: optionIndex + 1,
-          option_label: label,
+          option_label: label.trim(),
         })),
       })),
   }
-}
-
-function HighlightedText({ text, words }: { text: string; words: string[] }) {
-  if (words.length === 0) {
-    return <>{text || '문항 평가 후 감지된 표현이 여기에 표시됩니다.'}</>
-  }
-
-  const pattern = new RegExp(`(${words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'g')
-  const parts = text.split(pattern)
-
-  return (
-    <>
-      {parts.map((part, index) =>
-        words.includes(part) ? (
-          <mark key={`${part}-${index}`} className="rounded bg-amber-200 px-1 text-slate-950">
-            {part}
-          </mark>
-        ) : (
-          <span key={`${part}-${index}`}>{part}</span>
-        ),
-      )}
-    </>
-  )
 }
 
 function SortableQuestionCard({
@@ -148,7 +152,6 @@ function SortableQuestionCard({
   })
   const selectItem = useSurveyStore((state) => state.selectItem)
   const removeItem = useSurveyStore((state) => state.removeItem)
-  const toggleReverse = useSurveyStore((state) => state.toggleReverse)
 
   return (
     <div
@@ -165,7 +168,6 @@ function SortableQuestionCard({
         isSelected={selected}
         onSelect={() => selectItem(item.id)}
         onDelete={() => removeItem(item.id)}
-        onToggleReverse={(checked) => toggleReverse(item.id, checked)}
         dragActivator={
           <button
             type="button"
@@ -185,27 +187,68 @@ function SortableQuestionCard({
 export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
   const { id } = useParams()
   const navigate = useNavigate()
-  const [savedSurveyId, setSavedSurveyId] = useState<string | null>(id ?? null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [previewOpen, setPreviewOpen] = useState(false)
-  const [suggestionOpen, setSuggestionOpen] = useState(false)
   const { pushToast } = useToastStore()
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  const isEditMode = mode === 'edit' && Boolean(id)
+
+  const [savedSurveyId, setSavedSurveyId] = useState<string | null>(id ?? null)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [createConfirmOpen, setCreateConfirmOpen] = useState(false)
+  const [loadedSurveyId, setLoadedSurveyId] = useState<string | null>(null)
 
   const {
     items,
     selectedItemId,
     settings,
+    draftResetAt,
+    resetDraft,
     addItem,
-    insertGeneratedItem,
     updateItem,
-    replaceItemText,
-    setItemQuality,
-    setCitcResults,
+    updateItemOption,
     setSettings,
     reorderItems,
     setItemsFromBackendSurvey,
   } = useSurveyStore()
+
+  const editSurveyQuery = useQuery({
+    queryKey: ['survey-edit', id],
+    queryFn: () => getSurvey(id as string),
+    enabled: isEditMode,
+    retry: false,
+  })
+
+  useEffect(() => {
+    if (!isEditMode) {
+      return
+    }
+
+    const survey = editSurveyQuery.data
+    if (!survey || loadedSurveyId === survey.survey_id) {
+      return
+    }
+
+    setItemsFromBackendSurvey(survey, { normalItemsOnly: true })
+    setSavedSurveyId(survey.survey_id)
+    setLoadedSurveyId(survey.survey_id)
+  }, [editSurveyQuery.data, isEditMode, loadedSurveyId, setItemsFromBackendSurvey])
+
+  useEffect(() => {
+    if (isEditMode) {
+      return
+    }
+
+    resetDraft()
+  }, [isEditMode, resetDraft])
+
+  useEffect(() => {
+    if (isEditMode) {
+      return
+    }
+
+    setSavedSurveyId(null)
+    setLoadedSurveyId(null)
+    setCreateConfirmOpen(false)
+  }, [isEditMode, draftResetAt])
 
   const selectedItem = useMemo(
     () => items.find((item) => item.id === selectedItemId) ?? null,
@@ -213,266 +256,64 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
   )
   const selectedIndex = selectedItem ? items.findIndex((item) => item.id === selectedItem.id) : -1
 
-  const { register, handleSubmit, reset, getValues } = useForm<QuestionFormValues>({
-    defaultValues: {
-      text: selectedItem?.text ?? '',
-      type: selectedItem?.type ?? 'likert-5',
-    },
-  })
+  const saveSurveyMutation = useMutation<SaveSurveyResult, unknown, boolean>({
+    mutationFn: (enableValidationItems: boolean) => {
+      const errorMessage = validateSurveyForSave(settings.title, settings.surveyContext, items)
 
-  useEffect(() => {
-    reset({
-      text: selectedItem?.text ?? '',
-      type: selectedItem?.type ?? 'likert-5',
-    })
-  }, [reset, selectedItem])
-
-  const createSurveyMutation = useMutation({
-    mutationFn: () => {
-      const payload = buildSurveyCreatePayload(settings, items)
-
-      if (payload.items.length === 0) {
-        throw new Error('설문 문항을 1개 이상 입력해 주세요.')
+      if (errorMessage) {
+        throw new Error(errorMessage)
       }
 
-      return createSurvey(payload)
+      const payload = buildSurveyPayload(
+        settings.title,
+        settings.surveyContext,
+        items,
+        enableValidationItems,
+      )
+
+      const targetSurveyId = isEditMode ? id ?? null : savedSurveyId
+
+      if (targetSurveyId) {
+        return updateSurvey(targetSurveyId, payload).then((survey) => ({
+          survey,
+          action: 'update' as const,
+        }))
+      }
+
+      return createSurvey(payload).then((survey) => ({
+        survey,
+        action: 'create' as const,
+      }))
     },
-    onSuccess: (survey) => {
+    onSuccess: ({ survey, action }, enableValidationItems) => {
       setSavedSurveyId(survey.survey_id)
-      setItemsFromBackendSurvey(survey)
+      setItemsFromBackendSurvey(survey, { normalItemsOnly: true })
+      setCreateConfirmOpen(false)
       pushToast({
         type: 'success',
-        title: '설문 생성 완료',
-        description: `백엔드 survey_id: ${survey.survey_id}`,
+        title: action === 'update' ? '설문 저장 완료' : '설문 생성 완료',
+        description: enableValidationItems
+          ? `함정/역문항 포함 처리 완료 (survey_id: ${survey.survey_id})`
+          : `기본 설문 저장 완료 (survey_id: ${survey.survey_id})`,
       })
     },
     onError: (error) => {
+      console.error('[survey-editor] save failed', {
+        mode,
+        surveyId: id ?? savedSurveyId,
+        error,
+        response: (error as { response?: { data?: unknown; status?: number } })?.response,
+      })
       pushToast({
         type: 'error',
-        title: '설문 생성 실패',
-        description: error instanceof Error ? error.message : '백엔드 연결 또는 요청 형식을 확인해 주세요.',
+        title: isEditMode || Boolean(savedSurveyId) ? '설문 저장 실패' : '설문 생성 실패',
+        description: getApiErrorMessage(
+          error,
+          error instanceof Error ? error.message : '요청 처리 중 오류가 발생했습니다.',
+        ),
       })
     },
   })
-
-  const qualityMutation = useMutation({
-    mutationFn: evaluateItemQuality,
-    onSuccess: (result) => {
-      if (!selectedItem) {
-        return
-      }
-
-      setItemQuality(selectedItem.id, result)
-      setSuggestionOpen(Boolean(result.suggestion))
-      pushToast({
-        type: 'success',
-        title: '문항 품질 평가 완료',
-        description: `품질 점수 ${result.score}점을 확인했습니다.`,
-      })
-    },
-    onError: () => {
-      pushToast({
-        type: 'error',
-        title: '문항 품질 평가 실패',
-        description: '백엔드 API 연결 또는 응답 형식을 확인해 주세요.',
-      })
-    },
-  })
-
-  const citcMutation = useMutation({
-    mutationFn: predictSurveyCitc,
-    onSuccess: (response) => {
-      setCitcResults(response.results)
-      pushToast({
-        type: 'success',
-        title: '전체 일관성 분석 완료',
-        description: '각 문항의 CITC 예측 점수를 업데이트했습니다.',
-      })
-    },
-    onError: () => {
-      pushToast({
-        type: 'error',
-        title: 'CITC 분석 실패',
-        description: '문항 배열 요청/응답 구조를 백엔드와 확인해 주세요.',
-      })
-    },
-  })
-
-  const trapMutation = useMutation({
-    mutationFn: generateTrapItem,
-    onSuccess: (response) => {
-      insertGeneratedItem(response.trapItem, response.suggestedPosition, { isTrap: true })
-      pushToast({
-        type: 'success',
-        title: '함정 문항 생성 완료',
-        description: `추천 위치 ${response.suggestedPosition + 1}번에 삽입했습니다.`,
-      })
-    },
-    onError: () => {
-      pushToast({
-        type: 'error',
-        title: '함정 문항 생성 실패',
-        description: 'surveyContext와 items 요청값을 확인해 주세요.',
-      })
-    },
-  })
-
-  const reverseMutation = useMutation({
-    mutationFn: generateReverseItem,
-    onSuccess: (response) => {
-      if (!selectedItem) {
-        return
-      }
-
-      insertGeneratedItem(response.reverseItem, selectedIndex + 1, { isReverse: true })
-      pushToast({
-        type: 'success',
-        title: '역문항 생성 완료',
-        description: '선택한 문항 바로 아래에 삽입했습니다.',
-      })
-    },
-    onError: () => {
-      pushToast({
-        type: 'error',
-        title: '역문항 생성 실패',
-        description: 'originalItem 요청값과 응답 형식을 확인해 주세요.',
-      })
-    },
-  })
-
-  const applyItemChanges = (values: QuestionFormValues) => {
-    if (!selectedItem) {
-      return
-    }
-
-    updateItem(selectedItem.id, {
-      text: values.text,
-      type: values.type,
-    })
-    pushToast({
-      type: 'info',
-      title: '문항 내용 반영',
-      description: '현재 편집 내용이 좌측 목록에 반영되었습니다.',
-    })
-  }
-
-  const handleEvaluateQuality = () => {
-    if (!useMockApi) {
-      pushToast({
-        type: 'info',
-        title: '백엔드 평가는 결과 화면에서 실행합니다',
-        description: '설문을 생성한 뒤 결과 화면의 문항 품질 평가 버튼을 사용해 주세요.',
-      })
-      return
-    }
-
-    if (!selectedItem) {
-      return
-    }
-
-    const values = getValues()
-    const text = values.text.trim()
-
-    if (text.length < 4) {
-      pushToast({
-        type: 'error',
-        title: '문항을 먼저 입력해 주세요',
-        description: '품질 평가에는 최소 4자 이상의 문항 텍스트가 필요합니다.',
-      })
-      return
-    }
-
-    updateItem(selectedItem.id, { text, type: values.type })
-
-    // [API 연동 필요 - 문항 품질 평가]
-    // 엔드포인트: POST /api/item/quality
-    // 요청: { text: string }
-    // 응답: { score: number, flaggedWords: string[], suggestion: string | null }
-    qualityMutation.mutate({ text })
-  }
-
-  const handlePredictCitc = () => {
-    if (!useMockApi) {
-      pushToast({
-        type: 'info',
-        title: '백엔드 construct 평가로 대체됩니다',
-        description: '설문 생성 후 결과 화면에서 문항 구성 타당도 평가를 실행해 주세요.',
-      })
-      return
-    }
-
-    const validItems = items
-      .filter((item) => item.text.trim().length > 0)
-      .map((item) => ({ id: item.id, text: item.text.trim() }))
-
-    if (validItems.length < 2) {
-      pushToast({
-        type: 'error',
-        title: '문항이 2개 이상 필요합니다',
-        description: '전체 일관성 분석을 위해 문항을 더 추가해 주세요.',
-      })
-      return
-    }
-
-    // [API 연동 필요 - CITC 예측]
-    // 엔드포인트: POST /api/survey/citc-predict
-    // 요청: { items: { id: string, text: string }[] }
-    // 응답: { results: { id: string, citcScore: number, embeddingScore: number, llmScore: number }[] }
-    // 내부 로직: citcScore = a * embeddingScore + b * llmScore (가중합, a+b=1)
-    citcMutation.mutate({ items: validItems })
-  }
-
-  const handleGenerateTrap = () => {
-    if (!useMockApi) {
-      pushToast({
-        type: 'info',
-        title: '자동 검증 문항은 설문 생성 시 처리됩니다',
-        description: '설정에서 옵션을 켠 뒤 설문 생성 버튼을 누르면 백엔드가 생성을 시도합니다.',
-      })
-      return
-    }
-
-    // [API 연동 필요 - 함정 문항 생성]
-    // 엔드포인트: POST /api/item/generate-trap
-    // 요청: { surveyContext: string, items: string[] }
-    // 응답: { trapItem: string, suggestedPosition: number }
-    trapMutation.mutate({
-      surveyContext: settings.surveyContext,
-      items: items.map((item) => item.text),
-    })
-  }
-
-  const handleGenerateReverse = () => {
-    if (!useMockApi) {
-      pushToast({
-        type: 'info',
-        title: '자동 검증 문항은 설문 생성 시 처리됩니다',
-        description: '설정에서 옵션을 켠 뒤 설문 생성 버튼을 누르면 백엔드가 생성을 시도합니다.',
-      })
-      return
-    }
-
-    if (!selectedItem) {
-      return
-    }
-
-    const text = getValues().text.trim() || selectedItem.text
-
-    if (!settings.reverseEnabled) {
-      pushToast({
-        type: 'error',
-        title: '역문항 설정이 꺼져 있습니다',
-        description: '설문 설정에서 역문항 기능을 켠 뒤 다시 시도해 주세요.',
-      })
-      return
-    }
-
-    // [API 연동 필요 - 역문항 생성]
-    // 엔드포인트: POST /api/item/generate-reverse
-    // 요청: { originalItem: string }
-    // 응답: { reverseItem: string }
-    reverseMutation.mutate({ originalItem: text })
-  }
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
@@ -482,84 +323,111 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
     }
   }
 
-  const handleReplaceSuggestion = () => {
-    if (!selectedItem?.quality?.suggestion) {
-      return
-    }
+  const pageTitle = isEditMode ? `설문지 수정${id ? ` #${id}` : ''}` : '설문지 생성'
+  const hasExistingSurveyTarget = isEditMode ? Boolean(id) : Boolean(savedSurveyId)
+  const primaryActionLabel = hasExistingSurveyTarget ? '설문 저장' : '설문 생성'
+  const isLoadingEditSurvey = isEditMode && editSurveyQuery.isLoading && loadedSurveyId === null
 
-    replaceItemText(selectedItem.id, selectedItem.quality.suggestion)
-    setSuggestionOpen(false)
+  if (isEditMode && editSurveyQuery.isError && loadedSurveyId === null) {
+    return (
+      <section className="rounded-lg border border-rose-200 bg-white p-6 shadow-sm">
+        <h1 className="text-lg font-black text-slate-950">설문을 불러오지 못했습니다.</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          설문 ID를 확인하거나 백엔드 서버 상태를 확인해 주세요.
+        </p>
+      </section>
+    )
   }
-
-  const handleSaveDraft = () => {
-    createSurveyMutation.mutate()
-  }
-
-  const pageTitle = mode === 'edit' ? `설문지 편집 ${id ? `#${id}` : ''}` : '설문지 생성'
 
   return (
     <div className="space-y-4">
       <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-2xl font-black text-slate-950">{pageTitle}</h1>
-            <p className="mt-1 text-sm text-slate-600">
-              설문을 생성하면 백엔드에 저장되고, 생성된 survey_id로 응답 화면과 평가 화면을 확인할 수 있습니다.
-            </p>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h1 className="text-2xl font-black text-slate-950">{pageTitle}</h1>
+              <p className="mt-1 text-sm text-slate-600">
+                설문 제목, 설문 맥락, 문항과 보기 5개만 작성해 설문을 저장해 주세요.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                onClick={() => setPreviewOpen(true)}
+              >
+                <Eye size={16} />
+                미리보기
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-3 py-2 text-sm font-bold text-white hover:bg-teal-700 disabled:bg-slate-300"
+                disabled={saveSurveyMutation.isPending || isLoadingEditSurvey}
+                onClick={() => setCreateConfirmOpen(true)}
+              >
+                {saveSurveyMutation.isPending ? (
+                  <LoadingSpinner compact label="저장 중" />
+                ) : (
+                  <Save size={16} />
+                )}
+                {saveSurveyMutation.isPending ? null : primaryActionLabel}
+              </button>
+              {savedSurveyId ? (
+                <>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800"
+                    onClick={() => navigate(`/survey/${savedSurveyId}/respond`)}
+                  >
+                    응답 화면
+                  </button>
+                  <Link
+                    to={`/survey/${savedSurveyId}/results`}
+                    className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    결과 보기
+                  </Link>
+                </>
+              ) : null}
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-              onClick={() => setPreviewOpen(true)}
-            >
-              <Eye size={16} />
-              미리보기
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-              onClick={() => setSettingsOpen(true)}
-            >
-              <Settings size={16} />
-              설정
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-3 py-2 text-sm font-bold text-white hover:bg-teal-700 disabled:bg-slate-300"
-              disabled={createSurveyMutation.isPending}
-              onClick={handleSaveDraft}
-            >
-              {createSurveyMutation.isPending ? <LoadingSpinner compact label="저장 중" /> : <Save size={16} />}
-              {createSurveyMutation.isPending ? null : '설문 생성'}
-            </button>
-            {savedSurveyId ? (
-              <>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800"
-                  onClick={() => navigate(`/survey/${savedSurveyId}/respond`)}
-                >
-                  응답 화면
-                </button>
-                <Link
-                  to={`/survey/${savedSurveyId}/results`}
-                  className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                >
-                  결과 보기
-                </Link>
-              </>
-            ) : null}
+
+          {isLoadingEditSurvey ? (
+            <div className="rounded-lg bg-slate-50 p-3">
+              <LoadingSpinner compact label="설문 불러오는 중" />
+            </div>
+          ) : null}
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <label className="block">
+              <span className="mb-2 block text-sm font-bold text-slate-700">설문 제목</span>
+              <input
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                value={settings.title}
+                onChange={(event) => setSettings({ title: event.target.value })}
+                placeholder="예: 서비스 만족도 설문"
+              />
+            </label>
+
+            <label className="block lg:col-span-2">
+              <span className="mb-2 block text-sm font-bold text-slate-700">설문 맥락</span>
+              <textarea
+                className="min-h-24 w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                value={settings.surveyContext}
+                onChange={(event) => setSettings({ surveyContext: event.target.value })}
+                placeholder="응답자가 어떤 맥락에서 답하는지 설명해 주세요."
+              />
+            </label>
           </div>
         </div>
       </section>
 
-      <section className="grid min-h-[calc(100vh-210px)] gap-4 lg:grid-cols-[360px_1fr]">
+      <section className="grid min-h-[calc(100vh-230px)] gap-4 lg:grid-cols-[360px_1fr]">
         <aside className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-black text-slate-950">문항 목록</h2>
-              <p className="text-xs text-slate-500">드래그해서 순서를 바꿀 수 있습니다.</p>
+              <p className="text-xs text-slate-500">드래그해서 문항 순서를 바꿀 수 있습니다.</p>
             </div>
             <button
               type="button"
@@ -585,175 +453,46 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
               </div>
             </SortableContext>
           </DndContext>
-
-          <button
-            type="button"
-            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-bold text-teal-700 hover:bg-teal-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-            disabled={items.length < 2 || citcMutation.isPending}
-            onClick={handlePredictCitc}
-          >
-            {citcMutation.isPending ? (
-              <LoadingSpinner compact label="분석 중" />
-            ) : (
-              <>
-                <ListChecks size={16} />
-                전체 일관성 분석
-              </>
-            )}
-          </button>
         </aside>
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           {selectedItem ? (
-            <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
-              <form className="space-y-4" onSubmit={handleSubmit(applyItemChanges)}>
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <h2 className="text-lg font-black text-slate-950">
-                      Q{selectedIndex + 1}. 문항 상세 편집
-                    </h2>
-                    <p className="text-sm text-slate-600">
-                      문항을 수정한 뒤 평가하거나 역문항을 자동 생성할 수 있습니다.
-                    </p>
-                  </div>
-                  <button
-                    type="submit"
-                    className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                  >
-                    <RefreshCcw size={16} />
-                    문항 내용 반영
-                  </button>
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-lg font-black text-slate-950">Q{selectedIndex + 1}. 문항 상세 편집</h2>
+                <p className="text-sm text-slate-600">문항 텍스트와 보기 5개를 직접 입력해 주세요.</p>
+              </div>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-bold text-slate-700">문항 텍스트</span>
+                <textarea
+                  className="min-h-40 w-full resize-y rounded-lg border border-slate-300 px-3 py-3 text-sm leading-6 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                  placeholder="문항 텍스트를 입력해 주세요."
+                  value={selectedItem.text}
+                  onChange={(event) => updateItem(selectedItem.id, { text: event.target.value })}
+                />
+              </label>
+
+              <div className="rounded-lg border border-slate-200 p-4">
+                <h3 className="mb-3 text-sm font-black text-slate-900">보기 입력 (5개)</h3>
+                <div className="space-y-2">
+                  {selectedItem.options.slice(0, 5).map((option, optionIndex) => (
+                    <label key={`${selectedItem.id}-option-${optionIndex}`} className="block">
+                      <span className="mb-1 block text-xs font-bold text-slate-600">보기 {optionIndex + 1}</span>
+                      <input
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                        value={option}
+                        onChange={(event) => updateItemOption(selectedItem.id, optionIndex, event.target.value)}
+                      />
+                    </label>
+                  ))}
                 </div>
-
-                <label className="block">
-                  <span className="mb-2 block text-sm font-bold text-slate-700">문항 텍스트</span>
-                  <textarea
-                    className="min-h-40 w-full resize-y rounded-lg border border-slate-300 px-3 py-3 text-sm leading-6 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
-                    placeholder="예: 이 서비스는 필요한 기능을 쉽게 찾을 수 있게 구성되어 있다."
-                    {...register('text')}
-                  />
-                </label>
-
-                <label className="block">
-                  <span className="mb-2 block text-sm font-bold text-slate-700">문항 유형</span>
-                  <select
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
-                    {...register('type')}
-                  >
-                    {questionTypeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <button
-                    type="button"
-                    className="inline-flex items-center justify-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-bold text-white hover:bg-teal-700 disabled:bg-slate-300"
-                    disabled={qualityMutation.isPending}
-                    onClick={handleEvaluateQuality}
-                  >
-                    {qualityMutation.isPending ? (
-                      <LoadingSpinner compact label="평가 중" />
-                    ) : (
-                      <>
-                        <Sparkles size={16} />
-                        문항 평가하기
-                      </>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    className="inline-flex items-center justify-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-100 disabled:bg-slate-100 disabled:text-slate-400"
-                    disabled={reverseMutation.isPending}
-                    onClick={handleGenerateReverse}
-                  >
-                    {reverseMutation.isPending ? (
-                      <LoadingSpinner compact label="생성 중" />
-                    ) : (
-                      <>
-                        <Wand2 size={16} />
-                        역문항 자동 생성
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
-
-              <div className="space-y-4">
-                <section className="rounded-lg border border-slate-200 p-4">
-                  <h3 className="mb-3 text-base font-black text-slate-950">문항 품질 평가</h3>
-                  {selectedItem.quality ? (
-                    <div className="space-y-4">
-                      <ScoreBar score={selectedItem.quality.score} label="품질 점수" />
-                      <div>
-                        <p className="mb-2 text-sm font-bold text-slate-700">감지된 문제 어휘</p>
-                        <p className="rounded-lg bg-slate-50 p-3 text-sm leading-7 text-slate-700">
-                          <HighlightedText
-                            text={selectedItem.text}
-                            words={selectedItem.quality.flaggedWords}
-                          />
-                        </p>
-                      </div>
-                      {selectedItem.quality.score <= 60 ? (
-                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                          <div className="flex items-start gap-2">
-                            <AlertTriangle className="mt-0.5 shrink-0 text-amber-600" size={17} />
-                            <div>
-                              <p className="text-sm font-black text-amber-900">대체 문항 추천 필요</p>
-                              <p className="mt-1 text-sm leading-6 text-amber-900/85">
-                                점수가 60점 이하라 추천 문항 확인 모달을 열 수 있습니다.
-                              </p>
-                              <button
-                                type="button"
-                                className="mt-3 rounded-md bg-amber-600 px-3 py-2 text-sm font-bold text-white hover:bg-amber-700"
-                                onClick={() => setSuggestionOpen(true)}
-                              >
-                                추천 문항 보기
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                      문항 입력 후 <strong>문항 평가하기</strong>를 누르면 품질 점수, 문제 어휘,
-                      대체 문항 추천이 표시됩니다.
-                    </p>
-                  )}
-                </section>
-
-                <section className="rounded-lg border border-slate-200 p-4">
-                  <h3 className="mb-3 text-base font-black text-slate-950">CITC 예측 점수</h3>
-                  {selectedItem.citc ? (
-                    <div className="space-y-3">
-                      <ScoreBar score={selectedItem.citc.citcScore * 100} label="CITC 예측" />
-                      <div className="grid grid-cols-2 gap-2 text-sm">
-                        <div className="rounded-lg bg-slate-50 p-3">
-                          <span className="block text-xs font-semibold text-slate-500">Embedding</span>
-                          <strong className="text-slate-950">{selectedItem.citc.embeddingScore}</strong>
-                        </div>
-                        <div className="rounded-lg bg-slate-50 p-3">
-                          <span className="block text-xs font-semibold text-slate-500">LLM</span>
-                          <strong className="text-slate-950">{selectedItem.citc.llmScore}</strong>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                      문항이 2개 이상일 때 좌측 하단의 <strong>전체 일관성 분석</strong>을 실행하세요.
-                    </p>
-                  )}
-                </section>
               </div>
             </div>
           ) : (
             <div className="flex min-h-96 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 p-8 text-center">
-              <h2 className="text-lg font-black text-slate-950">선택된 문항이 없습니다</h2>
-              <p className="mt-2 text-sm text-slate-600">문항을 추가해서 설문 편집을 시작하세요.</p>
+              <h2 className="text-lg font-black text-slate-950">선택된 문항이 없습니다.</h2>
+              <p className="mt-2 text-sm text-slate-600">문항을 추가해서 설문 작성을 시작해 주세요.</p>
               <button
                 type="button"
                 className="mt-4 inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-bold text-white"
@@ -767,22 +506,43 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
         </section>
       </section>
 
-      <SettingsPanel
-        open={settingsOpen}
-        settings={settings}
-        itemsCount={items.length}
-        isGeneratingTrap={trapMutation.isPending}
-        onClose={() => setSettingsOpen(false)}
-        onChange={setSettings}
-        onGenerateTrap={handleGenerateTrap}
-      />
-
-      <SuggestionModal
-        open={suggestionOpen}
-        suggestion={selectedItem?.quality?.suggestion ?? null}
-        onReplace={handleReplaceSuggestion}
-        onIgnore={() => setSuggestionOpen(false)}
-      />
+      {createConfirmOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4">
+          <section className="w-full max-w-xl rounded-lg bg-white p-5 shadow-xl">
+            <h2 className="text-lg font-black text-slate-950">설문 저장 옵션 선택</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              함정 문항과 역문항을 자동 생성하면 응답 신뢰도를 더 정확하게 계산할 수 있습니다.
+              필요하면 기본 설문만 저장할 수도 있습니다.
+            </p>
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                className="inline-flex flex-1 items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
+                disabled={saveSurveyMutation.isPending || isLoadingEditSurvey}
+                onClick={() => saveSurveyMutation.mutate(true)}
+              >
+                함정/역문항 포함해서 저장
+              </button>
+              <button
+                type="button"
+                className="inline-flex flex-1 items-center justify-center rounded-md border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:text-slate-400"
+                disabled={saveSurveyMutation.isPending || isLoadingEditSurvey}
+                onClick={() => saveSurveyMutation.mutate(false)}
+              >
+                기본 설문만 저장
+              </button>
+            </div>
+            <button
+              type="button"
+              className="mt-3 inline-flex w-full items-center justify-center rounded-md px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100"
+              disabled={saveSurveyMutation.isPending || isLoadingEditSurvey}
+              onClick={() => setCreateConfirmOpen(false)}
+            >
+              닫기
+            </button>
+          </section>
+        </div>
+      ) : null}
 
       {previewOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4">
@@ -805,9 +565,17 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
               {items.map((item, index) => (
                 <li key={item.id} className="rounded-lg border border-slate-200 p-4">
                   <p className="text-sm font-bold text-slate-500">Q{index + 1}</p>
-                  <p className="mt-1 text-sm leading-6 text-slate-800">
-                    {item.text || '빈 문항입니다.'}
-                  </p>
+                  <p className="mt-1 text-sm leading-6 text-slate-800">{item.text || '빈 문항입니다.'}</p>
+                  <ul className="mt-3 space-y-1">
+                    {item.options.slice(0, 5).map((option, optionIndex) => (
+                      <li
+                        key={`${item.id}-preview-${optionIndex}`}
+                        className="rounded-md bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600"
+                      >
+                        {optionIndex + 1}. {option || '(보기 미입력)'}
+                      </li>
+                    ))}
+                  </ul>
                 </li>
               ))}
             </ol>

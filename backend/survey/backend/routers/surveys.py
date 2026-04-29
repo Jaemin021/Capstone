@@ -1,6 +1,6 @@
 # backend/routers/surveys.py
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from database import SessionLocal
 import models
 import schemas
@@ -18,6 +18,58 @@ from services.population_feature_service import calculate_population_features
 
 
 router = APIRouter(prefix="/surveys")
+
+
+@router.get("/")
+def list_surveys():
+    db = SessionLocal()
+
+    try:
+        surveys = db.query(models.Survey).order_by(models.Survey.title).all()
+
+        results = []
+
+        for survey in surveys:
+            item_count = db.query(models.SurveyItem).filter_by(
+                survey_id=survey.survey_id
+            ).count()
+
+            normal_item_count = db.query(models.SurveyItem).filter_by(
+                survey_id=survey.survey_id,
+                item_role="normal"
+            ).count()
+
+            response_count = db.query(models.Response).filter_by(
+                survey_id=survey.survey_id,
+                is_completed=True
+            ).count()
+
+            last_response = db.query(models.Response).filter_by(
+                survey_id=survey.survey_id,
+                is_completed=True
+            ).order_by(
+                models.Response.submitted_at.desc()
+            ).first()
+
+            results.append({
+                "survey_id": survey.survey_id,
+                "title": survey.title,
+                "description": survey.description,
+                "construct_name": survey.construct_name,
+                "construct_description": survey.construct_description,
+                "status": survey.status,
+                "item_count": item_count,
+                "normal_item_count": normal_item_count,
+                "response_count": response_count,
+                "last_response_at": last_response.submitted_at if last_response else None
+            })
+
+        return {
+            "surveys": results
+        }
+
+    finally:
+        db.close()
 
 
 @router.post("/")
@@ -277,6 +329,10 @@ def create_survey(survey: schemas.SurveyCreate):
     result = {
         "survey_id": survey_id,
         "title": db_survey.title,
+        "description": db_survey.description,
+        "construct_name": db_survey.construct_name,
+        "construct_description": db_survey.construct_description,
+        "status": db_survey.status,
         "items": created_items,
         "message": "survey created"
     }
@@ -319,6 +375,305 @@ def reorder_validation_items(created_items):
             final_items.extend(items)
 
     return final_items
+
+
+@router.put("/{survey_id}")
+@router.patch("/{survey_id}")
+def update_survey(survey_id: str, survey: schemas.SurveyCreate):
+    db = SessionLocal()
+
+    try:
+        db_survey = db.query(models.Survey).filter_by(survey_id=survey_id).first()
+
+        if db_survey is None:
+            raise HTTPException(status_code=404, detail="survey not found")
+
+        has_response = db.query(models.Response).filter_by(
+            survey_id=survey_id,
+            is_completed=True
+        ).first()
+
+        if has_response is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="survey already has responses and cannot be edited"
+            )
+
+        db_survey.title = survey.title
+        db_survey.description = survey.description
+        db_survey.construct_name = survey.construct_name
+        db_survey.construct_description = survey.construct_description
+        db.commit()
+
+        old_item_ids = [
+            row.item_id
+            for row in db.query(models.SurveyItem.item_id).filter_by(survey_id=survey_id).all()
+        ]
+
+        db.query(models.ItemQualityEvaluation).filter_by(
+            survey_id=survey_id
+        ).delete(synchronize_session=False)
+        db.query(models.ConstructEvaluation).filter_by(
+            survey_id=survey_id
+        ).delete(synchronize_session=False)
+        db.query(models.SurveyStatisticalEvaluation).filter_by(
+            survey_id=survey_id
+        ).delete(synchronize_session=False)
+        db.query(models.SurveyLogStatistics).filter_by(
+            survey_id=survey_id
+        ).delete(synchronize_session=False)
+
+        if old_item_ids:
+            db.query(models.SurveyItemOption).filter(
+                models.SurveyItemOption.item_id.in_(old_item_ids)
+            ).delete(synchronize_session=False)
+
+        db.query(models.SurveyItem).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+        db.commit()
+
+        created_items = []
+
+        for item in survey.items:
+            db_item = models.SurveyItem(
+                survey_id=survey_id,
+                item_order=item.item_order,
+                question_text=item.question_text,
+                question_type=item.question_type,
+                is_required=item.is_required,
+                item_role="normal",
+                is_generated=False,
+                source_item_id=None,
+                trap_correct_option_order=None,
+                reverse_expected_rule=None
+            )
+            db.add(db_item)
+            db.commit()
+            db.refresh(db_item)
+
+            created_options = []
+
+            if item.options:
+                for opt in item.options:
+                    db_option = models.SurveyItemOption(
+                        item_id=db_item.item_id,
+                        option_order=opt.option_order,
+                        option_label=opt.option_label,
+                        option_score=opt.option_order
+                    )
+                    db.add(db_option)
+                    db.commit()
+                    db.refresh(db_option)
+
+                    created_options.append({
+                        "option_id": db_option.option_id,
+                        "option_order": db_option.option_order,
+                        "option_label": db_option.option_label,
+                        "option_score": db_option.option_score
+                    })
+
+            created_items.append({
+                "item_id": db_item.item_id,
+                "item_order": db_item.item_order,
+                "question_text": db_item.question_text,
+                "question_type": db_item.question_type,
+                "item_role": "normal",
+                "is_generated": False,
+                "source_item_id": None,
+                "trap_correct_option_order": None,
+                "reverse_expected_rule": None,
+                "insert_after_index": None,
+                "options": created_options
+            })
+
+        if survey.enable_validation_items and created_items:
+            original_items = [
+                item for item in created_items
+                if item["item_role"] == "normal"
+            ]
+
+            llm_input = {
+                "title": survey.title,
+                "items": [
+                    {
+                        "index": i,
+                        "question_text": item["question_text"],
+                        "options": item["options"]
+                    }
+                    for i, item in enumerate(original_items)
+                ]
+            }
+
+            plan = generate_validation_plan_with_llm(llm_input)
+            next_order = len(created_items) + 1
+
+            for rev in plan.get("reverse_items", []):
+                source_index = rev.get("source_index")
+
+                if source_index is None or source_index < 0 or source_index >= len(original_items):
+                    continue
+
+                source = original_items[source_index]
+
+                db_item = models.SurveyItem(
+                    survey_id=survey_id,
+                    item_order=next_order,
+                    question_text=rev["question_text"],
+                    question_type="likert_5",
+                    is_required=True,
+                    item_role="reverse",
+                    is_generated=True,
+                    source_item_id=source["item_id"],
+                    trap_correct_option_order=None,
+                    reverse_expected_rule="opposite_likert_5"
+                )
+                db.add(db_item)
+                db.commit()
+                db.refresh(db_item)
+
+                created_options = []
+
+                for opt in source["options"]:
+                    db_option = models.SurveyItemOption(
+                        item_id=db_item.item_id,
+                        option_order=opt["option_order"],
+                        option_label=opt["option_label"],
+                        option_score=opt["option_order"]
+                    )
+                    db.add(db_option)
+                    db.commit()
+                    db.refresh(db_option)
+
+                    created_options.append({
+                        "option_id": db_option.option_id,
+                        "option_order": db_option.option_order,
+                        "option_label": db_option.option_label,
+                        "option_score": db_option.option_score
+                    })
+
+                created_items.append({
+                    "item_id": db_item.item_id,
+                    "item_order": db_item.item_order,
+                    "question_text": db_item.question_text,
+                    "question_type": db_item.question_type,
+                    "item_role": db_item.item_role,
+                    "is_generated": db_item.is_generated,
+                    "source_item_id": db_item.source_item_id,
+                    "trap_correct_option_order": db_item.trap_correct_option_order,
+                    "reverse_expected_rule": db_item.reverse_expected_rule,
+                    "insert_after_index": rev.get("insert_after_index"),
+                    "options": created_options
+                })
+
+                next_order += 1
+
+            for trap in plan.get("trap_items", []):
+                base_item = original_items[0]
+                correct_option_order = trap.get("correct_option_order", 2)
+
+                correct_opt = next(
+                    (
+                        opt for opt in base_item["options"]
+                        if opt["option_order"] == correct_option_order
+                    ),
+                    None
+                )
+
+                if correct_opt is None:
+                    correct_option_order = 2
+                    correct_opt = next(
+                        opt for opt in base_item["options"]
+                        if opt["option_order"] == correct_option_order
+                    )
+
+                question_text = (
+                    f"응답 신뢰도 확인을 위해 '{correct_opt['option_label']}'를 선택해 주세요."
+                )
+
+                db_item = models.SurveyItem(
+                    survey_id=survey_id,
+                    item_order=next_order,
+                    question_text=question_text,
+                    question_type="likert_5",
+                    is_required=True,
+                    item_role="trap",
+                    is_generated=True,
+                    source_item_id=None,
+                    trap_correct_option_order=correct_option_order,
+                    reverse_expected_rule=None
+                )
+                db.add(db_item)
+                db.commit()
+                db.refresh(db_item)
+
+                created_options = []
+
+                for opt in base_item["options"]:
+                    db_option = models.SurveyItemOption(
+                        item_id=db_item.item_id,
+                        option_order=opt["option_order"],
+                        option_label=opt["option_label"],
+                        option_score=opt["option_order"]
+                    )
+                    db.add(db_option)
+                    db.commit()
+                    db.refresh(db_option)
+
+                    created_options.append({
+                        "option_id": db_option.option_id,
+                        "option_order": db_option.option_order,
+                        "option_label": db_option.option_label,
+                        "option_score": db_option.option_score
+                    })
+
+                created_items.append({
+                    "item_id": db_item.item_id,
+                    "item_order": db_item.item_order,
+                    "question_text": db_item.question_text,
+                    "question_type": db_item.question_type,
+                    "item_role": db_item.item_role,
+                    "is_generated": db_item.is_generated,
+                    "source_item_id": db_item.source_item_id,
+                    "trap_correct_option_order": db_item.trap_correct_option_order,
+                    "reverse_expected_rule": db_item.reverse_expected_rule,
+                    "insert_after_index": trap.get("insert_after_index"),
+                    "options": created_options
+                })
+
+                next_order += 1
+
+        created_items = reorder_validation_items(created_items)
+
+        for order, item in enumerate(created_items, start=1):
+            item["item_order"] = order
+
+            db_item = db.query(models.SurveyItem).filter_by(
+                item_id=item["item_id"]
+            ).first()
+
+            if db_item is not None:
+                db_item.item_order = order
+
+        db.commit()
+
+        return {
+            "survey_id": survey_id,
+            "title": db_survey.title,
+            "description": db_survey.description,
+            "construct_name": db_survey.construct_name,
+            "construct_description": db_survey.construct_description,
+            "status": db_survey.status,
+            "items": created_items,
+            "message": "survey updated"
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"failed to update survey: {repr(e)}")
+    finally:
+        db.close()
 
 
 @router.get("/{survey_id}")
@@ -375,6 +730,150 @@ def get_survey(survey_id: str):
 
     db.close()
     return result
+
+
+@router.get("/{survey_id}/reliability-distribution")
+def get_survey_reliability_distribution(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        survey = db.query(models.Survey).filter_by(survey_id=survey_id).first()
+        if survey is None:
+            raise HTTPException(status_code=404, detail="survey not found")
+
+        rows = db.query(
+            models.Response,
+            models.ResponseFeature
+        ).join(
+            models.ResponseFeature,
+            models.Response.response_id == models.ResponseFeature.response_id
+        ).filter(
+            models.Response.survey_id == survey_id,
+            models.Response.is_completed == True
+        ).order_by(
+            models.Response.submitted_at.asc()
+        ).all()
+
+        respondents = []
+        high_count = 0
+        mid_count = 0
+        low_count = 0
+
+        for response, response_feature in rows:
+            compact = response_feature.compact_features or {}
+            reliability = calculate_reliability_summary(compact)
+
+            score = compact.get("reliability_score")
+            if score is None:
+                score = reliability["score"]
+
+            try:
+                score = float(score)
+            except Exception:
+                score = reliability["score"]
+
+            status = compact.get("reliability_status")
+            if status not in ["good", "warning", "bad"]:
+                status = reliability["status"]
+
+            if status == "good":
+                high_count += 1
+            elif status == "warning":
+                mid_count += 1
+            else:
+                low_count += 1
+
+            avg_item_time_ms = compact.get("avg_item_time_ms")
+            time_per_item = []
+
+            try:
+                if avg_item_time_ms is not None:
+                    time_per_item = [float(avg_item_time_ms) / 1000.0]
+            except Exception:
+                time_per_item = []
+
+            reason_text = ""
+            if reliability.get("reasons"):
+                reason_text = ", ".join(reliability["reasons"])
+
+            respondents.append({
+                "id": response.response_id,
+                "submittedAt": response.submitted_at,
+                "reliabilityScore": round(score, 1),
+                "timePerItem": time_per_item,
+                "flagged": status == "bad",
+                "reason": reason_text
+            })
+
+        return {
+            "survey_id": survey_id,
+            "total_count": len(respondents),
+            "high_count": high_count,
+            "mid_count": mid_count,
+            "low_count": low_count,
+            "distribution": [
+                {"level": "high", "label": "상", "count": high_count},
+                {"level": "mid", "label": "중", "count": mid_count},
+                {"level": "low", "label": "하", "count": low_count}
+            ],
+            "respondents": respondents
+        }
+
+    finally:
+        db.close()
+
+
+@router.delete("/{survey_id}")
+def delete_survey(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        survey = db.query(models.Survey).filter_by(survey_id=survey_id).first()
+
+        if survey is None:
+            raise HTTPException(status_code=404, detail="survey not found")
+
+        item_ids = [
+            row.item_id
+            for row in db.query(models.SurveyItem.item_id).filter_by(survey_id=survey_id).all()
+        ]
+
+        db.query(models.ConnectionEvent).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+        db.query(models.ResponseItemLog).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+        db.query(models.ResponseAnswer).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+        db.query(models.ResponseLog).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+        db.query(models.ResponseFeature).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+        db.query(models.Response).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+
+        db.query(models.ItemQualityEvaluation).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+        db.query(models.ConstructEvaluation).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+        db.query(models.SurveyStatisticalEvaluation).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+        db.query(models.SurveyLogStatistics).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+
+        if item_ids:
+            db.query(models.SurveyItemOption).filter(
+                models.SurveyItemOption.item_id.in_(item_ids)
+            ).delete(synchronize_session=False)
+
+        db.query(models.SurveyItem).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+        db.query(models.Survey).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+
+        db.commit()
+
+        return {
+            "survey_id": survey_id,
+            "message": "survey deleted"
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"failed to delete survey: {repr(e)}")
+
+    finally:
+        db.close()
 
 
 @router.post("/{survey_id}/responses")

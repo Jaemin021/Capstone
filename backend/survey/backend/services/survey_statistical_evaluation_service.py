@@ -2,6 +2,7 @@
 
 from datetime import datetime
 import models
+from services.feature_service import should_exclude_from_statistics
 
 
 def now_str():
@@ -131,9 +132,27 @@ def build_response_score_matrix(db, survey_id):
         is_completed=True
     ).all()
 
+    response_feature_rows = db.query(models.ResponseFeature).filter_by(
+        survey_id=survey_id
+    ).all()
+
+    compact_feature_by_response = {
+        row.response_id: (row.compact_features or {})
+        for row in response_feature_rows
+    }
+
     matrix = []
+    excluded_response_ids = []
+    included_response_ids = []
 
     for response in responses:
+        compact_features = compact_feature_by_response.get(response.response_id) or {}
+        excluded, _ = should_exclude_from_statistics(compact_features)
+
+        if excluded:
+            excluded_response_ids.append(response.response_id)
+            continue
+
         answers = db.query(models.ResponseAnswer).filter_by(
             survey_id=survey_id,
             response_id=response.response_id
@@ -157,17 +176,28 @@ def build_response_score_matrix(db, survey_id):
 
         if valid:
             matrix.append(row)
+            included_response_ids.append(response.response_id)
 
-    return matrix, item_ids
+    metadata = {
+        "raw_response_count": len(responses),
+        "excluded_response_count": len(excluded_response_ids),
+        "included_response_count": len(included_response_ids),
+        "excluded_response_ids": excluded_response_ids,
+        "included_response_ids": included_response_ids,
+    }
+
+    return matrix, item_ids, metadata
 
 
 def evaluate_survey_statistics(db, survey_id: str, overwrite: bool = True):
-    matrix, item_ids = build_response_score_matrix(db, survey_id)
+    matrix, item_ids, metadata = build_response_score_matrix(db, survey_id)
 
     if len(matrix) < 2:
         return {
             "survey_id": survey_id,
             "response_count": len(matrix),
+            "raw_response_count": metadata.get("raw_response_count", 0),
+            "excluded_response_count": metadata.get("excluded_response_count", 0),
             "item_count": len(item_ids),
             "error": "Cronbach alpha/CITC 계산에는 최소 2개 이상의 완성 응답이 필요합니다."
         }
@@ -207,6 +237,8 @@ def evaluate_survey_statistics(db, survey_id: str, overwrite: bool = True):
         "stat_eval_id": db_eval.stat_eval_id,
         "survey_id": survey_id,
         "response_count": len(matrix),
+        "raw_response_count": metadata.get("raw_response_count", 0),
+        "excluded_response_count": metadata.get("excluded_response_count", 0),
         "item_count": len(item_ids),
         "cronbach_alpha": cronbach_alpha,
         "item_citc_results": item_citc_results,

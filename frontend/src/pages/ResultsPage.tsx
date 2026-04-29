@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
@@ -16,6 +16,7 @@ import {
   getSurvey,
   getSurveyConstruct,
   getSurveyQuality,
+  getSurveyReliability,
   getSurveyStatistics,
   readResponseResultFromStorage,
 } from '../api/surveyApi'
@@ -24,17 +25,77 @@ import { ReliabilityBadge } from '../components/ReliabilityBadge'
 import { ScoreBar } from '../components/ScoreBar'
 import { useToastStore } from '../store/toastStore'
 import type {
+  BackendSurveyItem,
   CompactResponseFeatures,
   ConstructEvaluationItem,
   EvaluationStatus,
   QualityEvaluationItem,
+  SurveyReliabilityResponse,
   StatisticsEvaluationResponse,
   SurveyResponseSubmitResult,
 } from '../types/survey'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (typeof error !== 'object' || error === null) {
+    return fallback
+  }
+
+  const response = (error as { response?: { data?: unknown } }).response
+  const data = response?.data
+
+  if (typeof data === 'string') {
+    return data
+  }
+
+  if (typeof data === 'object' && data !== null) {
+    const detail = (data as { detail?: unknown; error?: unknown; message?: unknown }).detail
+    const apiError = (data as { error?: unknown }).error
+    const message = (data as { message?: unknown }).message
+
+    if (typeof detail === 'string') {
+      return detail
+    }
+
+    if (typeof apiError === 'string') {
+      return apiError
+    }
+
+    if (typeof message === 'string') {
+      return message
+    }
+  }
+
+  return fallback
+}
+
+function compactError(error: unknown) {
+  if (typeof error !== 'object' || error === null) {
+    return error ?? null
+  }
+
+  const message = (error as { message?: unknown }).message
+  const response = (error as { response?: { status?: unknown; data?: unknown } }).response
+
+  return {
+    message: typeof message === 'string' ? message : null,
+    status: response?.status ?? null,
+    data: response?.data ?? null,
+  }
+}
 
 function statusLabel(status?: EvaluationStatus) {
   if (status === 'good') {
-    return '신뢰 가능'
+    return '신뢰도 높음'
   }
 
   if (status === 'warning') {
@@ -42,7 +103,7 @@ function statusLabel(status?: EvaluationStatus) {
   }
 
   if (status === 'bad') {
-    return '신뢰 낮음'
+    return '신뢰도 낮음'
   }
 
   return '결과 없음'
@@ -89,7 +150,7 @@ function numberFeature(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
-function formatDecimal(value: unknown, unit = '', maximumFractionDigits = 1) {
+function formatValue(value: unknown, unit = '', maximumFractionDigits = 1) {
   const number = numberFeature(value)
 
   if (number == null) {
@@ -99,7 +160,7 @@ function formatDecimal(value: unknown, unit = '', maximumFractionDigits = 1) {
   return `${number.toLocaleString('ko-KR', { maximumFractionDigits })}${unit}`
 }
 
-function formatMilliseconds(value: unknown) {
+function formatMs(value: unknown) {
   const ms = numberFeature(value)
 
   if (ms == null) {
@@ -110,131 +171,55 @@ function formatMilliseconds(value: unknown) {
     return `${Math.round(ms).toLocaleString('ko-KR')}ms`
   }
 
-  return `${(ms / 1000).toLocaleString('ko-KR', {
-    maximumFractionDigits: 1,
-  })}초`
+  return `${(ms / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}초`
 }
 
 function formatRatio(value: unknown) {
   const ratio = numberFeature(value)
-
   if (ratio == null) {
     return '데이터 없음'
   }
 
-  return `${(ratio * 100).toLocaleString('ko-KR', {
-    maximumFractionDigits: 1,
-  })}%`
-}
-
-function formatConnectionLost(value: unknown) {
-  const number = numberFeature(value)
-
-  if (number == null) {
-    return '데이터 없음'
-  }
-
-  return number > 0 ? '있음' : '없음'
+  return `${(ratio * 100).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}%`
 }
 
 function ResponseFeatureDetails({ features }: { features?: CompactResponseFeatures }) {
   if (!features) {
     return (
       <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-        제출된 응답 세부 정보가 아직 없습니다.
+        제출된 응답 feature 데이터가 아직 없습니다.
       </p>
     )
   }
 
-  const groups = [
-    {
-      title: '응답 시간',
-      description: '문항을 읽고 선택하는 데 걸린 시간을 봅니다.',
-      items: [
-        { label: '문항당 평균 응답 시간', value: formatMilliseconds(features.avg_item_time_ms) },
-        {
-          label: '너무 빠르게 응답한 문항',
-          value: formatRatio(features.too_fast_item_ratio),
-        },
-        {
-          label: '첫 선택까지 평균 시간',
-          value: formatMilliseconds(features.mean_time_to_first_answer_ms),
-        },
-        {
-          label: '첫 선택까지 최단 시간',
-          value: formatMilliseconds(features.min_time_to_first_answer_ms),
-        },
-        {
-          label: '마지막 선택 후 이동까지 평균 시간',
-          value: formatMilliseconds(features.mean_time_after_last_answer_ms),
-        },
-      ],
-    },
-    {
-      title: '수정 및 재방문',
-      description: '답을 바꾸거나 이전 문항으로 돌아간 흔적을 봅니다.',
-      items: [
-        { label: '문항당 평균 클릭/터치', value: formatDecimal(features.avg_touch_per_item, '회') },
-        { label: '문항당 평균 답변 수정', value: formatDecimal(features.mean_change_count, '회') },
-        { label: '전체 답변 수정 횟수', value: formatDecimal(features.total_change_count, '회', 0) },
-        { label: '문항당 평균 방문 횟수', value: formatDecimal(features.mean_visit_count, '회') },
-        {
-          label: '문항당 평균 뒤로가기 방문',
-          value: formatDecimal(features.mean_back_visit_count, '회'),
-        },
-        { label: '전체 뒤로가기 횟수', value: formatDecimal(features.total_back_visit_count, '회', 0) },
-        { label: '재방문 문항 비율', value: formatRatio(features.revisit_item_ratio) },
-        { label: '답변 변경 문항 비율', value: formatRatio(features.answer_changed_ratio) },
-        {
-          label: '재방문 후 수정 비율',
-          value: formatRatio(features.changed_after_revisit_ratio),
-        },
-        { label: '평균 재방문 시간', value: formatMilliseconds(features.mean_revisit_time_ms) },
-        { label: '최대 재방문 시간', value: formatMilliseconds(features.max_revisit_time_ms) },
-      ],
-    },
-    {
-      title: '연결 및 검증',
-      description: '네트워크 상태와 함정/역문항 관련 신호를 봅니다.',
-      items: [
-        { label: '오프라인 비율', value: formatRatio(features.offline_ratio) },
-        { label: '응답 중 연결 끊김', value: formatConnectionLost(features.connection_lost) },
-        { label: '함정 문항 실패 비율', value: formatRatio(features.trap_fail_ratio) },
-        { label: '역문항 평균 차이', value: formatDecimal(features.reverse_avg_diff) },
-        {
-          label: '역문항 일관성 점수',
-          value: formatRatio(features.reverse_consistency_score),
-        },
-        { label: '응답 시간 패턴 편차', value: formatDecimal(features.time_curve_deviation) },
-        { label: '비교 응답 표본 수', value: formatDecimal(features.population_sample_count, '명', 0) },
-        { label: '분석 문항 수', value: formatDecimal(features.item_count, '개', 0) },
-      ],
-    },
+  const rows = [
+    { label: '문항당 평균 응답 시간', value: formatMs(features.avg_item_time_ms) },
+    { label: '너무 빠른 응답 비율', value: formatRatio(features.too_fast_item_ratio) },
+    { label: '답안 변경 비율', value: formatRatio(features.answer_changed_ratio) },
+    { label: '재방문 문항 비율', value: formatRatio(features.revisit_item_ratio) },
+    { label: '오프라인 비율', value: formatRatio(features.offline_ratio) },
+    { label: '함정 문항 실패 비율', value: formatRatio(features.trap_fail_ratio) },
+    { label: '역문항 일관성 점수', value: formatRatio(features.reverse_consistency_score) },
+    { label: '분석 문항 수', value: formatValue(features.item_count, '개', 0) },
   ]
 
   return (
-    <div className="grid gap-3 lg:grid-cols-3">
-      {groups.map((group) => (
-        <article key={group.title} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <h3 className="text-sm font-black text-slate-950">{group.title}</h3>
-          <p className="mt-1 text-xs leading-5 text-slate-500">{group.description}</p>
-          <dl className="mt-4 space-y-3">
-            {group.items.map((item) => (
-              <div
-                key={item.label}
-                className="flex items-start justify-between gap-3 border-t border-slate-200 pt-3 first:border-t-0 first:pt-0"
-              >
-                <dt className="text-sm font-semibold leading-5 text-slate-600">{item.label}</dt>
-                <dd className="shrink-0 text-right text-sm font-black text-slate-950">
-                  {item.value}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </article>
-      ))}
-    </div>
+    <article className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <h3 className="text-sm font-black text-slate-950">응답 로그 상세</h3>
+      <dl className="mt-3 space-y-2">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-start justify-between gap-3">
+            <dt className="text-sm font-semibold text-slate-600">{row.label}</dt>
+            <dd className="text-sm font-black text-slate-900">{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </article>
   )
+}
+
+type QualityDisplayItem = QualityEvaluationItem & {
+  item_role: BackendSurveyItem['item_role']
 }
 
 function QualityRow({
@@ -242,10 +227,35 @@ function QualityRow({
   open,
   onToggle,
 }: {
-  item: QualityEvaluationItem
+  item: QualityDisplayItem
   open: boolean
   onToggle: () => void
 }) {
+  if (item.item_role !== 'normal') {
+    const isReverse = item.item_role === 'reverse'
+
+    return (
+      <article className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-black text-slate-700">
+            Q{item.item_order}
+          </span>
+          <span
+            className={`rounded-md px-2 py-1 text-xs font-black ring-1 ${
+              isReverse
+                ? 'bg-indigo-50 text-indigo-700 ring-indigo-200'
+                : 'bg-rose-50 text-rose-700 ring-rose-200'
+            }`}
+          >
+            {isReverse ? '역문항' : '함정문항'}
+          </span>
+          <span className="text-xs font-bold text-slate-500">평가 제외 문항</span>
+        </div>
+        <p className="text-sm leading-6 text-slate-800">{item.question_text}</p>
+      </article>
+    )
+  }
+
   const problem = item.status === 'warning' || item.status === 'bad'
 
   return (
@@ -360,7 +370,7 @@ function StatisticsPanel({ statistics }: { statistics?: StatisticsEvaluationResp
   if (!statistics || statistics.result === null) {
     return (
       <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-        저장된 통계 분석 결과가 없습니다. 응답이 2개 이상 쌓인 뒤 통계 분석을 실행해 주세요.
+        저장된 통계 분석 결과가 없습니다. 응답이 충분히 쌓인 뒤 통계 분석을 실행해 주세요.
       </p>
     )
   }
@@ -435,6 +445,60 @@ function StatisticsPanel({ statistics }: { statistics?: StatisticsEvaluationResp
   )
 }
 
+function ReliabilityDistributionPanel({ data }: { data?: SurveyReliabilityResponse }) {
+  const respondents = data?.respondents ?? []
+  const fallbackHigh = respondents.filter((row) => row.reliabilityScore >= 75).length
+  const fallbackMid = respondents.filter(
+    (row) => row.reliabilityScore >= 55 && row.reliabilityScore < 75,
+  ).length
+  const fallbackLow = respondents.filter((row) => row.reliabilityScore < 55).length
+
+  const high = data?.high_count ?? fallbackHigh
+  const mid = data?.mid_count ?? fallbackMid
+  const low = data?.low_count ?? fallbackLow
+  const total = data?.total_count ?? respondents.length
+
+  const chartData = [
+    { label: '상', count: high, color: '#10b981' },
+    { label: '중', count: mid, color: '#f59e0b' },
+    { label: '하', count: low, color: '#ef4444' },
+  ]
+
+  if (total <= 0) {
+    return (
+      <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+        신뢰도 분포를 표시할 응답이 아직 없습니다.
+      </p>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm font-bold text-slate-600">
+        총 응답 {total}명 (상 {high}명 / 중 {mid}명 / 하 {low}명)
+      </p>
+      <div className="h-64 w-full rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={chartData} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+            <XAxis dataKey="label" tick={{ fill: '#334155', fontSize: 12 }} />
+            <YAxis allowDecimals={false} tick={{ fill: '#334155', fontSize: 12 }} />
+            <Tooltip
+              formatter={(value) => [`${Number(value ?? 0)}명`, '응답 수']}
+              cursor={{ fill: '#f1f5f9' }}
+            />
+            <Bar dataKey="count" radius={[6, 6, 0, 0]}>
+              {chartData.map((entry) => (
+                <Cell key={entry.label} fill={entry.color} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  )
+}
+
 export function ResultsPage() {
   const { id = 'demo' } = useParams()
   const location = useLocation()
@@ -475,59 +539,115 @@ export function ResultsPage() {
     retry: false,
   })
 
+  const reliabilityQuery = useQuery({
+    queryKey: ['survey-reliability', id],
+    queryFn: () => getSurveyReliability(id),
+    enabled: Boolean(id) && id !== 'demo',
+    retry: false,
+  })
+
   const qualityMutation = useMutation({
     mutationFn: () => evaluateSurveyQuality(id),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      console.log('[results] quality mutation response', data)
       queryClient.invalidateQueries({ queryKey: ['survey-quality', id] })
       pushToast({ type: 'success', title: '문항 품질 평가 완료' })
     },
-    onError: () => {
+    onError: (error) => {
+      console.error('[results] quality mutation failed', error)
       pushToast({
         type: 'error',
         title: '문항 품질 평가 실패',
-        description: 'OPENAI_API_KEY 또는 백엔드 로그를 확인해 주세요.',
+        description: getErrorMessage(error, '평가 실행 중 오류가 발생했습니다.'),
       })
     },
   })
 
   const constructMutation = useMutation({
     mutationFn: () => evaluateSurveyConstruct(id),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      console.log('[results] construct mutation response', data)
       queryClient.invalidateQueries({ queryKey: ['survey-construct', id] })
       pushToast({ type: 'success', title: '문항 구성 타당도 평가 완료' })
     },
-    onError: () => {
+    onError: (error) => {
+      console.error('[results] construct mutation failed', error)
       pushToast({
         type: 'error',
         title: '문항 구성 타당도 평가 실패',
-        description: '실제 OpenAI API 키가 필요합니다.',
+        description: getErrorMessage(error, '평가 실행 중 오류가 발생했습니다.'),
       })
     },
   })
 
   const statisticsMutation = useMutation({
     mutationFn: () => evaluateSurveyStatistics(id),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      console.log('[results] statistics mutation response', data)
       queryClient.invalidateQueries({ queryKey: ['survey-statistics', id] })
       pushToast({ type: 'success', title: '통계 분석 완료' })
     },
-    onError: () => {
+    onError: (error) => {
+      console.error('[results] statistics mutation failed', error)
       pushToast({
         type: 'error',
         title: '통계 분석 실패',
-        description: '응답 수가 충분한지 확인해 주세요.',
+        description: getErrorMessage(error, '응답 수가 충분한지 확인해 주세요.'),
       })
     },
   })
 
+  const evaluationPending =
+    qualityMutation.isPending || constructMutation.isPending || statisticsMutation.isPending
+
   const qualityResults = qualityQuery.data?.results ?? []
   const constructResults = constructQuery.data?.results ?? []
-  const problemQualityCount = qualityResults.filter(
+  const surveyItems = surveyQuery.data?.items ?? []
+  const qualityResultMap = useMemo(
+    () => new Map(qualityResults.map((item) => [item.item_id, item])),
+    [qualityResults],
+  )
+
+  const qualityDisplayItems: QualityDisplayItem[] = useMemo(
+    () =>
+      surveyItems.map((surveyItem) => {
+        const quality = qualityResultMap.get(surveyItem.item_id)
+
+        if (quality) {
+          return {
+            ...quality,
+            item_role: surveyItem.item_role,
+          }
+        }
+
+        return {
+          item_id: surveyItem.item_id,
+          item_order: surveyItem.item_order,
+          question_text: surveyItem.question_text,
+          quality_score: null,
+          status: 'unknown',
+          problem_categories: null,
+          detected_terms: null,
+          llm_comment: null,
+          suggested_rewrite: null,
+          created_at: null,
+          item_role: surveyItem.item_role,
+        }
+      }),
+    [qualityResultMap, surveyItems],
+  )
+
+  const evaluationTargetItems = qualityDisplayItems.filter((item) => item.item_role === 'normal')
+  const evaluatedQualityCount = evaluationTargetItems.filter((item) => qualityResultMap.has(item.item_id))
+    .length
+  const problemQualityCount = evaluationTargetItems.filter(
     (item) => item.status === 'warning' || item.status === 'bad',
   ).length
+
   const responseScore = responseResult?.reliability?.score ?? responseResult?.features.reliability_score
   const responseStatus =
     responseResult?.reliability?.status ?? responseResult?.features.reliability_status
+  const reliabilityRespondentCount = reliabilityQuery.data?.total_count ?? reliabilityQuery.data?.respondents.length ?? 0
 
   return (
     <div className="space-y-4">
@@ -539,7 +659,7 @@ export function ResultsPage() {
               {surveyQuery.data?.title ?? '응답 및 평가 결과'}
             </h1>
             <p className="mt-1 text-sm leading-6 text-slate-600">
-              기본 화면은 핵심 상태만 보여주고, 세부 feature와 LLM 코멘트는 펼쳐보기로 확인합니다.
+              응답 신뢰도, 문항 평가, 통계 분석 결과를 한 화면에서 확인합니다.
             </p>
           </div>
           {surveyQuery.isLoading ? <LoadingSpinner compact label="설문 조회 중" /> : null}
@@ -554,9 +674,7 @@ export function ResultsPage() {
             </div>
             <div>
               <h2 className="text-lg font-black text-slate-950">응답 신뢰도 요약</h2>
-              <p className="mt-1 text-sm text-slate-600">
-                응답 제출 직후 백엔드가 계산한 feature를 기준으로 표시합니다.
-              </p>
+              <p className="mt-1 text-sm text-slate-600">응답 제출 직후 계산된 결과입니다.</p>
             </div>
           </div>
           {responseScore != null ? (
@@ -567,6 +685,11 @@ export function ResultsPage() {
             </span>
           )}
         </div>
+
+        <p className="mt-3 text-sm font-semibold text-slate-600">
+          전체 응답 기준 신뢰도 분포는 아래 통계 섹션에서 확인할 수 있습니다.
+          {` (현재 누적 응답 ${reliabilityRespondentCount}명)`}
+        </p>
 
         {responseScore != null ? (
           <div className="mt-5 space-y-4">
@@ -581,7 +704,7 @@ export function ResultsPage() {
           </div>
         ) : (
           <p className="mt-4 rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-            응답 화면에서 설문을 제출하면 이곳에 신뢰도 요약이 표시됩니다.
+            응답 화면에서 제출을 완료하면 신뢰도 요약이 표시됩니다.
           </p>
         )}
       </section>
@@ -595,14 +718,14 @@ export function ResultsPage() {
             <div>
               <h2 className="text-lg font-black text-slate-950">문항 품질 평가</h2>
               <p className="mt-1 text-sm text-slate-600">
-                warning/bad 문항만 강조하고, LLM 코멘트는 필요할 때만 펼칩니다.
+                일반 문항만 점수/상태를 표시하고, 역문항/함정문항은 태그로 구분합니다.
               </p>
             </div>
           </div>
           <button
             type="button"
             className="inline-flex items-center justify-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-bold text-white hover:bg-teal-700 disabled:bg-slate-300"
-            disabled={qualityMutation.isPending}
+            disabled={evaluationPending}
             onClick={() => qualityMutation.mutate()}
           >
             {qualityMutation.isPending ? <LoadingSpinner compact label="평가 중" /> : '문항 품질 평가'}
@@ -610,12 +733,13 @@ export function ResultsPage() {
         </div>
 
         <p className="mb-4 text-sm font-bold text-slate-600">
-          문제 문항: {problemQualityCount}개 / 전체 {qualityResults.length}개
+          전체 문항: {qualityDisplayItems.length}개 / 평가 대상 문항: {evaluationTargetItems.length}
+          개 / 평가 완료: {evaluatedQualityCount}개 / 문제 문항: {problemQualityCount}개
         </p>
 
         <div className="space-y-3">
-          {qualityResults.length > 0 ? (
-            qualityResults.map((item) => (
+          {qualityDisplayItems.length > 0 ? (
+            qualityDisplayItems.map((item) => (
               <QualityRow
                 key={item.item_id}
                 item={item}
@@ -629,7 +753,7 @@ export function ResultsPage() {
             ))
           ) : (
             <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-              저장된 품질 평가 결과가 없습니다. 버튼을 눌러 백엔드 평가를 실행하세요.
+              저장된 품질 평가 결과가 없습니다. 버튼을 눌러 평가를 실행해 주세요.
             </p>
           )}
         </div>
@@ -643,15 +767,13 @@ export function ResultsPage() {
             </div>
             <div>
               <h2 className="text-lg font-black text-slate-950">문항 구성 타당도 평가</h2>
-              <p className="mt-1 text-sm text-slate-600">
-                이 문항이 설문 목적에 맞는지 상태 중심으로 확인합니다.
-              </p>
+              <p className="mt-1 text-sm text-slate-600">일반 문항 기준으로 결과를 제공합니다.</p>
             </div>
           </div>
           <button
             type="button"
             className="inline-flex items-center justify-center gap-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:bg-slate-300"
-            disabled={constructMutation.isPending}
+            disabled={evaluationPending}
             onClick={() => constructMutation.mutate()}
           >
             {constructMutation.isPending ? (
@@ -678,7 +800,7 @@ export function ResultsPage() {
             ))
           ) : (
             <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-              저장된 construct 평가 결과가 없습니다. 실제 OpenAI API 키가 있을 때 실행하세요.
+              저장된 구성 타당도 평가 결과가 없습니다.
             </p>
           )}
         </div>
@@ -693,14 +815,14 @@ export function ResultsPage() {
             <div>
               <h2 className="text-lg font-black text-slate-950">통계 분석</h2>
               <p className="mt-1 text-sm text-slate-600">
-                응답이 충분히 쌓이면 Cronbach alpha와 문항별 CITC를 확인합니다.
+                응답 수가 충분할 때 Cronbach alpha와 CITC를 확인할 수 있습니다.
               </p>
             </div>
           </div>
           <button
             type="button"
             className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:bg-slate-100"
-            disabled={statisticsMutation.isPending}
+            disabled={evaluationPending}
             onClick={() => statisticsMutation.mutate()}
           >
             {statisticsMutation.isPending ? <LoadingSpinner compact label="분석 중" /> : '통계 분석'}
@@ -714,7 +836,47 @@ export function ResultsPage() {
           </div>
         ) : null}
 
+        <div className="mb-5 rounded-lg border border-slate-200 p-4">
+          <h3 className="text-base font-black text-slate-950">응답 신뢰도 분포</h3>
+          <p className="mt-1 text-sm text-slate-600">
+            최근 1건이 아닌 전체 응답 기준으로 상/중/하 인원을 보여줍니다.
+          </p>
+          <div className="mt-3">
+            {reliabilityQuery.isLoading ? (
+              <LoadingSpinner compact label="신뢰도 분포 불러오는 중" />
+            ) : reliabilityQuery.isError ? (
+              <div className="rounded-lg bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+                신뢰도 분포를 불러오지 못했습니다.
+              </div>
+            ) : (
+              <ReliabilityDistributionPanel data={reliabilityQuery.data} />
+            )}
+          </div>
+        </div>
+
         <StatisticsPanel statistics={statisticsQuery.data} />
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-base font-black text-slate-950">디버깅 응답(JSON)</h2>
+        <p className="mt-1 text-sm text-slate-600">평가 API 응답 원문을 확인할 수 있습니다.</p>
+        <pre className="mt-3 max-h-96 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">
+{JSON.stringify(
+  {
+    surveyId: id,
+    quality: qualityQuery.data ?? null,
+    construct: constructQuery.data ?? null,
+    statistics: statisticsQuery.data ?? null,
+    reliability: reliabilityQuery.data ?? null,
+    qualityQueryError: compactError(qualityQuery.error),
+    constructQueryError: compactError(constructQuery.error),
+    statisticsQueryError: compactError(statisticsQuery.error),
+    reliabilityQueryError: compactError(reliabilityQuery.error),
+  },
+  null,
+  2,
+)}
+        </pre>
       </section>
     </div>
   )

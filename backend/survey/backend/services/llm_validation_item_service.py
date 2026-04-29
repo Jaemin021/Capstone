@@ -5,7 +5,8 @@ import re
 import json
 import random
 from dotenv import load_dotenv
-from openai import OpenAI
+
+from services.openai_http_client import create_chat_completion
 
 # -----------------------------
 # 환경변수 로드
@@ -17,8 +18,6 @@ MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 
 if not API_KEY:
     raise ValueError("OPENAI_API_KEY is not configured. Check your .env file.")
-
-client = OpenAI(api_key=API_KEY)
 
 
 # -----------------------------
@@ -238,6 +237,44 @@ def normalize_validation_plan(raw_plan, item_count: int):
     return normalized
 
 
+def build_fallback_validation_plan(survey_data):
+    item_count = len(survey_data.get("items", []))
+
+    if item_count <= 0:
+        return default_validation_plan()
+
+    reverse_count, trap_count = get_validation_limits(item_count)
+
+    reverse_items = []
+    for idx in range(min(reverse_count, item_count)):
+        source = survey_data["items"][idx]
+        original_text = str(source.get("question_text", "")).strip()
+        if not original_text:
+            continue
+
+        reverse_items.append({
+            "source_index": idx,
+            "insert_after_index": idx,
+            "question_text": f"다음 진술은 나에게 해당하지 않는다: {original_text}"
+        })
+
+    trap_items = []
+    if trap_count > 0:
+        trap_items.append({
+            "insert_after_index": max(0, item_count - 2),
+            "correct_option_order": 3,
+        })
+
+    return adjust_validation_positions(
+        {
+            "validation_level": 1 if (reverse_items or trap_items) else 0,
+            "reverse_items": reverse_items,
+            "trap_items": trap_items,
+        },
+        item_count,
+    )
+
+
 # -----------------------------
 # LLM 호출
 # -----------------------------
@@ -250,7 +287,7 @@ def generate_validation_plan_with_llm(survey_data):
     prompt = build_prompt(survey_data)
 
     try:
-        response = client.chat.completions.create(
+        content = create_chat_completion(
             model=MODEL,
             messages=[
                 {"role": "system", "content": "Return ONLY JSON"},
@@ -259,11 +296,15 @@ def generate_validation_plan_with_llm(survey_data):
             temperature=0.2
         )
 
-        content = response.choices[0].message.content
         raw_plan = extract_json_from_text(content)
+        normalized = normalize_validation_plan(raw_plan, item_count)
 
-        return normalize_validation_plan(raw_plan, item_count)
+        # If parsing succeeded but produced empty plan unexpectedly, fallback.
+        if not normalized["reverse_items"] and not normalized["trap_items"]:
+            return build_fallback_validation_plan(survey_data)
+
+        return normalized
 
     except Exception as e:
         print("LLM validation plan failed:", repr(e))
-        return default_validation_plan()
+        return build_fallback_validation_plan(survey_data)

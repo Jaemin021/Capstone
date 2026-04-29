@@ -5,7 +5,7 @@ export const useMockApi = import.meta.env.VITE_USE_MOCK_API !== 'false'
 
 export const http = axios.create({
   baseURL: apiBaseUrl,
-  timeout: 12_000,
+  timeout: 180_000,
   headers: {
     'Content-Type': 'application/json',
   },

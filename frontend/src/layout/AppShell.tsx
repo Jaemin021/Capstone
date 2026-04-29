@@ -1,32 +1,44 @@
 import type { ReactNode } from 'react'
-import { BarChart3, FilePlus2, LayoutDashboard, Menu, NotebookText } from 'lucide-react'
-import { NavLink } from 'react-router-dom'
+import { BarChart3, FilePlus2, Menu, NotebookText } from 'lucide-react'
+import { NavLink, useLocation } from 'react-router-dom'
 import { clsx } from 'clsx'
+import { useSurveyStore } from '../store/surveyStore'
 
 export interface AppShellProps {
   children: ReactNode
 }
 
 const navItems = [
-  { to: '/', label: '대시보드', icon: LayoutDashboard },
   { to: '/survey/create', label: '설문 만들기', icon: FilePlus2 },
-  { to: '/survey/demo/results', label: '결과 통계', icon: BarChart3 },
+  { to: '/surveys', label: '설문 목록', icon: BarChart3 },
   { to: '/guide', label: '작성 가이드', icon: NotebookText },
 ]
 
 export function AppShell({ children }: AppShellProps) {
+  const location = useLocation()
+  const resetDraft = useSurveyStore((state) => state.resetDraft)
+  const isRespondPage = /^\/survey\/[^/]+\/respond\/?$/.test(location.pathname)
+
+  if (isRespondPage) {
+    return (
+      <div className="min-h-screen bg-slate-100">
+        <main className="px-4 py-5 lg:px-6">{children}</main>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-slate-100">
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 lg:px-6">
-          <NavLink to="/" className="flex items-center gap-3">
+          <NavLink to="/survey/create" onClick={resetDraft} className="flex items-center gap-3">
             <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-600 text-sm font-black text-white">
-              SQ
+              SZ
             </span>
             <span className="min-w-0">
-              <span className="block text-sm font-black text-slate-950">Survey Quality</span>
+              <span className="block text-sm font-black text-slate-950">설문지Zone</span>
               <span className="hidden text-xs font-semibold text-slate-500 sm:block">
-                문항 품질 및 응답 신뢰도 분석
+                문항 품질과 응답 신뢰도 분석
               </span>
             </span>
           </NavLink>
@@ -39,6 +51,7 @@ export function AppShell({ children }: AppShellProps) {
                 <NavLink
                   key={item.to}
                   to={item.to}
+                  onClick={item.to === '/survey/create' ? resetDraft : undefined}
                   className={({ isActive }) =>
                     clsx(
                       'inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold transition',
@@ -71,6 +84,7 @@ export function AppShell({ children }: AppShellProps) {
               <NavLink
                 key={item.to}
                 to={item.to}
+                onClick={item.to === '/survey/create' ? resetDraft : undefined}
                 className={({ isActive }) =>
                   clsx(
                     'inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold',

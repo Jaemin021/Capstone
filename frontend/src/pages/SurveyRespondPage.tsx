@@ -115,6 +115,24 @@ function getDisplayOptions(item: BackendSurveyItem) {
   }))
 }
 
+function getRoleBadge(item: BackendSurveyItem) {
+  if (item.item_role === 'reverse') {
+    return {
+      label: '역문항',
+      className: 'bg-indigo-50 text-indigo-700',
+    }
+  }
+
+  if (item.item_role === 'trap') {
+    return {
+      label: '함정문항',
+      className: 'bg-rose-50 text-rose-700',
+    }
+  }
+
+  return null
+}
+
 export function SurveyRespondPage() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
@@ -542,7 +560,22 @@ export function SurveyRespondPage() {
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-sm font-black text-slate-500">Q{currentIndex + 1}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-black text-slate-500">Q{currentIndex + 1}</p>
+          {(() => {
+            const roleBadge = getRoleBadge(currentItem)
+
+            if (!roleBadge) {
+              return null
+            }
+
+            return (
+              <span className={`rounded-md px-2 py-1 text-xs font-bold ${roleBadge.className}`}>
+                {roleBadge.label}
+              </span>
+            )
+          })()}
+        </div>
         <h2 className="mt-2 text-xl font-black leading-8 text-slate-950">
           {currentItem.question_text}
         </h2>

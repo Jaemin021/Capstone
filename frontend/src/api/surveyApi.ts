@@ -12,6 +12,7 @@ import type {
   BackendSurveyItem,
   BackendSurveyItemOption,
   BackendSurveyResponse,
+  BackendSurveyUpdatePayload,
   CitcPredictRequest,
   CitcPredictResponse,
   ConstructEvaluationResponse,
@@ -24,6 +25,7 @@ import type {
   ItemStatsResponse,
   QualityEvaluationResponse,
   StatisticsEvaluationResponse,
+  SurveyListResponse,
   SurveyReliabilityResponse,
   SurveyResponseSubmitPayload,
   SurveyResponseSubmitResult,
@@ -129,6 +131,72 @@ export async function createSurvey(
   return data
 }
 
+export async function updateSurvey(
+  surveyId: string,
+  payload: BackendSurveyUpdatePayload,
+): Promise<BackendSurveyResponse> {
+  if (useMockApi) {
+    const raw = window.localStorage.getItem(getMockSurveyStorageKey(surveyId))
+
+    if (!raw) {
+      throw new Error('Mock survey not found')
+    }
+
+    const current = JSON.parse(raw) as BackendSurveyResponse
+    const items: BackendSurveyItem[] = payload.items.map((item, index) => {
+      const itemId = createMockId('item')
+
+      return {
+        item_id: itemId,
+        item_order: index + 1,
+        question_text: item.question_text,
+        question_type: item.question_type,
+        item_role: 'normal',
+        is_generated: false,
+        source_item_id: null,
+        trap_correct_option_order: null,
+        reverse_expected_rule: null,
+        insert_after_index: null,
+        options: item.options?.length
+          ? item.options.map((option) => ({
+              option_id: `${itemId}-option-${option.option_order}`,
+              option_order: option.option_order,
+              option_label: option.option_label,
+              option_score: option.option_order,
+            }))
+          : buildMockOptions(itemId),
+      }
+    })
+
+    const updated: BackendSurveyResponse = {
+      ...current,
+      title: payload.title,
+      description: payload.description ?? null,
+      construct_name: payload.construct_name ?? null,
+      construct_description: payload.construct_description ?? null,
+      items,
+      message: 'mock survey updated',
+    }
+
+    window.localStorage.setItem(getMockSurveyStorageKey(surveyId), JSON.stringify(updated))
+    return updated
+  }
+
+  try {
+    const { data } = await http.put<BackendSurveyResponse>(`/surveys/${surveyId}`, payload)
+    return data
+  } catch (error) {
+    const status = (error as { response?: { status?: number } })?.response?.status
+
+    if (status === 404 || status === 405) {
+      const { data } = await http.patch<BackendSurveyResponse>(`/surveys/${surveyId}`, payload)
+      return data
+    }
+
+    throw error
+  }
+}
+
 export async function getSurvey(surveyId: string): Promise<BackendSurveyResponse> {
   if (useMockApi) {
     const raw = window.localStorage.getItem(getMockSurveyStorageKey(surveyId))
@@ -142,6 +210,54 @@ export async function getSurvey(surveyId: string): Promise<BackendSurveyResponse
 
   const { data } = await http.get<BackendSurveyResponse>(`/surveys/${surveyId}`)
   return data
+}
+
+export async function getSurveyList(): Promise<SurveyListResponse> {
+  if (useMockApi) {
+    const surveys = Object.keys(window.localStorage)
+      .filter((key) => key.startsWith('mock-survey:'))
+      .map((key) => {
+        const survey = JSON.parse(window.localStorage.getItem(key) || '{}') as BackendSurveyResponse
+
+        return {
+          survey_id: survey.survey_id,
+          title: survey.title,
+          description: survey.description ?? null,
+          construct_name: survey.construct_name ?? null,
+          construct_description: survey.construct_description ?? null,
+          status: survey.status ?? 'draft',
+          item_count: survey.items?.length ?? 0,
+          normal_item_count:
+            survey.items?.filter((item) => item.item_role === 'normal').length ?? 0,
+          response_count: 0,
+          last_response_at: null,
+        }
+      })
+
+    return { surveys }
+  }
+
+  const { data } = await http.get<SurveyListResponse>('/surveys/')
+  return data
+}
+
+export async function deleteSurvey(surveyId: string): Promise<void> {
+  if (useMockApi) {
+    window.localStorage.removeItem(getMockSurveyStorageKey(surveyId))
+    window.localStorage.removeItem(responseResultStorageKey(surveyId))
+    return
+  }
+
+  try {
+    await http.delete(`/surveys/${surveyId}`)
+  } catch (error) {
+    console.error('[survey] delete failed', {
+      surveyId,
+      error,
+      response: (error as { response?: { data?: unknown; status?: number } })?.response,
+    })
+    throw error
+  }
 }
 
 export async function submitSurveyResponse(
@@ -205,37 +321,79 @@ export async function submitSurveyResponse(
 export async function evaluateSurveyQuality(
   surveyId: string,
 ): Promise<QualityEvaluationResponse> {
-  const { data } = await http.post<QualityEvaluationResponse>(
-    `/survey-evaluations/${surveyId}/quality`,
-  )
-  return data
+  const endpoint = `/survey-evaluations/${surveyId}/quality`
+  console.log('[survey-eval] POST quality request', { surveyId, endpoint })
+  try {
+    const { data } = await http.post<QualityEvaluationResponse>(endpoint)
+    console.log('[survey-eval] POST quality response', data)
+    return data
+  } catch (error) {
+    console.error('[survey-eval] POST quality failed', {
+      surveyId,
+      endpoint,
+      error,
+      response: (error as { response?: { data?: unknown; status?: number } })?.response,
+    })
+    throw error
+  }
 }
 
 export async function getSurveyQuality(
   surveyId: string,
 ): Promise<QualityEvaluationResponse> {
-  const { data } = await http.get<QualityEvaluationResponse>(
-    `/survey-evaluations/${surveyId}/quality`,
-  )
-  return data
+  const endpoint = `/survey-evaluations/${surveyId}/quality`
+  try {
+    const { data } = await http.get<QualityEvaluationResponse>(endpoint)
+    console.log('[survey-eval] GET quality response', data)
+    return data
+  } catch (error) {
+    console.error('[survey-eval] GET quality failed', {
+      surveyId,
+      endpoint,
+      error,
+      response: (error as { response?: { data?: unknown; status?: number } })?.response,
+    })
+    throw error
+  }
 }
 
 export async function evaluateSurveyConstruct(
   surveyId: string,
 ): Promise<ConstructEvaluationResponse> {
-  const { data } = await http.post<ConstructEvaluationResponse>(
-    `/survey-evaluations/${surveyId}/construct`,
-  )
-  return data
+  const endpoint = `/survey-evaluations/${surveyId}/construct`
+  console.log('[survey-eval] POST construct request', { surveyId, endpoint })
+  try {
+    const { data } = await http.post<ConstructEvaluationResponse>(endpoint)
+    console.log('[survey-eval] POST construct response', data)
+    return data
+  } catch (error) {
+    console.error('[survey-eval] POST construct failed', {
+      surveyId,
+      endpoint,
+      error,
+      response: (error as { response?: { data?: unknown; status?: number } })?.response,
+    })
+    throw error
+  }
 }
 
 export async function getSurveyConstruct(
   surveyId: string,
 ): Promise<ConstructEvaluationResponse> {
-  const { data } = await http.get<ConstructEvaluationResponse>(
-    `/survey-evaluations/${surveyId}/construct`,
-  )
-  return data
+  const endpoint = `/survey-evaluations/${surveyId}/construct`
+  try {
+    const { data } = await http.get<ConstructEvaluationResponse>(endpoint)
+    console.log('[survey-eval] GET construct response', data)
+    return data
+  } catch (error) {
+    console.error('[survey-eval] GET construct failed', {
+      surveyId,
+      endpoint,
+      error,
+      response: (error as { response?: { data?: unknown; status?: number } })?.response,
+    })
+    throw error
+  }
 }
 
 export async function evaluateSurveyStatistics(
@@ -287,23 +445,44 @@ export async function getSurveyReliability(
     return mockGetSurveyReliability()
   }
 
-  const stored = readResponseResultFromStorage(surveyId)
+  try {
+    const { data } = await http.get<SurveyReliabilityResponse>(
+      `/surveys/${surveyId}/reliability-distribution`,
+    )
+    return data
+  } catch (error) {
+    console.error('[survey] reliability distribution fetch failed', {
+      surveyId,
+      error,
+      response: (error as { response?: { data?: unknown; status?: number } })?.response,
+    })
 
-  if (!stored?.reliability) {
-    return { respondents: [] }
-  }
+    const stored = readResponseResultFromStorage(surveyId)
+    if (!stored?.reliability) {
+      return { respondents: [] }
+    }
 
-  return {
-    respondents: [
-      {
-        id: stored.response_id,
-        submittedAt: new Date().toISOString(),
-        reliabilityScore: stored.reliability.score,
-        timePerItem: [Number(stored.features.avg_item_time_ms ?? 0) / 1000],
-        flagged: stored.reliability.status === 'bad',
-        reason: stored.reliability.reasons.join(', '),
-      },
-    ],
+    return {
+      total_count: 1,
+      high_count: stored.reliability.status === 'good' ? 1 : 0,
+      mid_count: stored.reliability.status === 'warning' ? 1 : 0,
+      low_count: stored.reliability.status === 'bad' ? 1 : 0,
+      distribution: [
+        { level: 'high', label: '상', count: stored.reliability.status === 'good' ? 1 : 0 },
+        { level: 'mid', label: '중', count: stored.reliability.status === 'warning' ? 1 : 0 },
+        { level: 'low', label: '하', count: stored.reliability.status === 'bad' ? 1 : 0 },
+      ],
+      respondents: [
+        {
+          id: stored.response_id,
+          submittedAt: new Date().toISOString(),
+          reliabilityScore: stored.reliability.score,
+          timePerItem: [Number(stored.features.avg_item_time_ms ?? 0) / 1000],
+          flagged: stored.reliability.status === 'bad',
+          reason: stored.reliability.reasons.join(', '),
+        },
+      ],
+    }
   }
 }
 

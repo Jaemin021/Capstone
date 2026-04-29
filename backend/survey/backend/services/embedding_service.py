@@ -1,31 +1,18 @@
-# backend/services/embedding_service.py
-
 import os
 import math
 from dotenv import load_dotenv
-from openai import OpenAI
+
+from services.openai_http_client import create_embedding
 
 load_dotenv()
 
-API_KEY = os.getenv("OPENAI_API_KEY")
 EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-
-if not API_KEY:
-    raise ValueError("OPENAI_API_KEY is not configured.")
-
-client = OpenAI(api_key=API_KEY)
 
 
 def get_embedding(text: str):
     if not text:
         text = ""
-
-    response = client.embeddings.create(
-        model=EMBEDDING_MODEL,
-        input=text
-    )
-
-    return response.data[0].embedding
+    return create_embedding(model=EMBEDDING_MODEL, text=text)
 
 
 def cosine_similarity(vec1, vec2):

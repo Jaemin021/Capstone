@@ -13,18 +13,52 @@ const createId = () =>
     ? crypto.randomUUID()
     : `item-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
+const defaultOptions = [
+  '전혀 그렇지 않다',
+  '그렇지 않다',
+  '보통이다',
+  '그렇다',
+  '매우 그렇다',
+]
+
+const normalizeOptions = (options?: string[]) => {
+  const next = (options ?? []).slice(0, 5)
+
+  while (next.length < 5) {
+    next.push(`보기 ${next.length + 1}`)
+  }
+
+  return next
+}
+
 const initialItems: SurveyItem[] = [
   {
     id: createId(),
     text: '이 서비스는 필요한 기능을 쉽게 찾을 수 있게 구성되어 있다.',
     type: 'likert-5',
+    options: [...defaultOptions],
   },
   {
     id: createId(),
     text: '서비스 이용 과정에서 제공되는 설명은 이해하기 쉽다.',
     type: 'likert-5',
+    options: [...defaultOptions],
   },
 ]
+
+const createInitialItems = (): SurveyItem[] =>
+  initialItems.map((item) => ({
+    ...item,
+    id: createId(),
+    options: [...item.options],
+    quality: undefined,
+    citc: undefined,
+  }))
+
+const initialSettings: SurveySettings = {
+  title: '',
+  surveyContext: '',
+}
 
 function fromBackendQuestionType(questionType: string): QuestionType {
   if (questionType === 'likert_5') {
@@ -38,37 +72,51 @@ interface SurveyStore {
   items: SurveyItem[]
   selectedItemId: string | null
   settings: SurveySettings
+  draftResetAt: number
+  resetDraft: () => void
   addItem: () => void
-  insertGeneratedItem: (text: string, position: number, flags?: Partial<SurveyItem>) => void
   selectItem: (id: string) => void
   updateItem: (id: string, updates: Partial<Pick<SurveyItem, 'text' | 'type'>>) => void
+  updateItemOption: (id: string, optionIndex: number, value: string) => void
   removeItem: (id: string) => void
   reorderItems: (activeId: string, overId: string) => void
   replaceItemText: (id: string, text: string) => void
   setItemQuality: (id: string, quality: ItemQualityResult) => void
   setCitcResults: (results: CitcResult[]) => void
-  toggleReverse: (id: string, checked: boolean) => void
   setSettings: (settings: Partial<SurveySettings>) => void
-  setItemsFromBackendSurvey: (survey: BackendSurveyResponse) => void
+  setItemsFromBackendSurvey: (
+    survey: BackendSurveyResponse,
+    options?: { normalItemsOnly?: boolean },
+  ) => void
 }
 
+const seededItems = createInitialItems()
+
 export const useSurveyStore = create<SurveyStore>((set, get) => ({
-  items: initialItems,
-  selectedItemId: initialItems[0]?.id ?? null,
+  items: seededItems,
+  selectedItemId: seededItems[0]?.id ?? null,
+  draftResetAt: 0,
   settings: {
     title: '응답 신뢰도 분석 설문',
     surveyContext: '디지털 서비스 사용성 만족도 조사',
-    description: '',
-    constructName: '',
-    constructDescription: '',
-    trapEnabled: false,
-    reverseEnabled: false,
   },
+  resetDraft: () =>
+    set(() => {
+      const items = createInitialItems()
+
+      return {
+        items,
+        selectedItemId: items[0]?.id ?? null,
+        draftResetAt: Date.now(),
+        settings: { ...initialSettings },
+      }
+    }),
   addItem: () => {
     const item: SurveyItem = {
       id: createId(),
       text: '',
       type: 'likert-5',
+      options: [...defaultOptions],
     }
 
     set((state) => ({
@@ -76,32 +124,30 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
       selectedItemId: item.id,
     }))
   },
-  insertGeneratedItem: (text, position, flags) => {
-    const item: SurveyItem = {
-      id: createId(),
-      text,
-      type: (flags?.type as QuestionType | undefined) ?? 'likert-5',
-      isTrap: flags?.isTrap,
-      isReverse: flags?.isReverse,
-    }
-
-    set((state) => {
-      const nextItems = [...state.items]
-      const safePosition = Math.max(0, Math.min(position, nextItems.length))
-      nextItems.splice(safePosition, 0, item)
-
-      return {
-        items: nextItems,
-        selectedItemId: item.id,
-      }
-    })
-  },
   selectItem: (id) => set({ selectedItemId: id }),
   updateItem: (id, updates) =>
     set((state) => ({
       items: state.items.map((item) =>
         item.id === id ? { ...item, ...updates, quality: undefined, citc: undefined } : item,
       ),
+    })),
+  updateItemOption: (id, optionIndex, value) =>
+    set((state) => ({
+      items: state.items.map((item) => {
+        if (item.id !== id) {
+          return item
+        }
+
+        const nextOptions = [...item.options]
+        nextOptions[optionIndex] = value
+
+        return {
+          ...item,
+          options: normalizeOptions(nextOptions),
+          quality: undefined,
+          citc: undefined,
+        }
+      }),
     })),
   removeItem: (id) =>
     set((state) => {
@@ -145,12 +191,6 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
         citc: results.find((result) => result.id === item.id),
       })),
     })),
-  toggleReverse: (id, checked) =>
-    set((state) => ({
-      items: state.items.map((item) =>
-        item.id === id ? { ...item, isReverse: checked } : item,
-      ),
-    })),
   setSettings: (settings) =>
     set((state) => ({
       settings: {
@@ -158,14 +198,18 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
         ...settings,
       },
     })),
-  setItemsFromBackendSurvey: (survey) =>
+  setItemsFromBackendSurvey: (survey, options) =>
     set(() => {
-      const items = survey.items.map((item) => ({
+      const sourceItems = options?.normalItemsOnly
+        ? survey.items.filter((item) => item.item_role === 'normal')
+        : survey.items
+
+      const items = sourceItems.map((item) => ({
         id: item.item_id,
         backendItemId: item.item_id,
         text: item.question_text,
         type: fromBackendQuestionType(item.question_type),
-        options: item.options.map((option) => option.option_label),
+        options: normalizeOptions(item.options.map((option) => option.option_label)),
         backendOptions: item.options,
         isTrap: item.item_role === 'trap',
         isReverse: item.item_role === 'reverse',
@@ -176,12 +220,7 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
         selectedItemId: items[0]?.id ?? null,
         settings: {
           title: survey.title,
-          surveyContext: survey.construct_description ?? survey.description ?? '',
-          description: survey.description ?? '',
-          constructName: survey.construct_name ?? '',
-          constructDescription: survey.construct_description ?? '',
-          trapEnabled: false,
-          reverseEnabled: false,
+          surveyContext: survey.description ?? survey.construct_description ?? '',
         },
       }
     }),

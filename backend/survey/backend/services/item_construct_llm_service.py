@@ -1,20 +1,13 @@
-# backend/services/item_construct_llm_service.py
-
 import os
 import re
 import json
 from dotenv import load_dotenv
-from openai import OpenAI
+
+from services.openai_http_client import create_chat_completion
 
 load_dotenv()
 
-API_KEY = os.getenv("OPENAI_API_KEY")
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-
-if not API_KEY:
-    raise ValueError("OPENAI_API_KEY is not configured.")
-
-client = OpenAI(api_key=API_KEY)
 
 
 def extract_json_from_text(text: str):
@@ -101,29 +94,23 @@ construct_description: {survey.construct_description}
 - off_construct_risk: 다른 개념을 묻는 위험, 0~10. 높을수록 위험 큼
 """
 
-    try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": "Return ONLY JSON"},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2
-        )
+    content = create_chat_completion(
+        model=MODEL,
+        messages=[
+            {"role": "system", "content": "Return ONLY JSON"},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.2,
+    )
 
-        content = response.choices[0].message.content
-        parsed = extract_json_from_text(content)
+    parsed = extract_json_from_text(content)
 
-        if not isinstance(parsed, dict):
-            return default_llm_construct_result()
+    if not isinstance(parsed, dict):
+        raise ValueError(f"LLM construct JSON parse failed. raw={content!r}")
 
-        base = default_llm_construct_result()
-        base.update(parsed)
-        return base
-
-    except Exception as e:
-        print("LLM construct evaluation failed:", repr(e))
-        return default_llm_construct_result()
+    base = default_llm_construct_result()
+    base.update(parsed)
+    return base
 
 
 def calculate_llm_construct_score(llm_features):

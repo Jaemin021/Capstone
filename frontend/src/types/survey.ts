@@ -20,7 +20,7 @@ export interface SurveyItem {
   backendItemId?: string
   text: string
   type: QuestionType
-  options?: string[]
+  options: string[]
   backendOptions?: BackendSurveyItemOption[]
   isTrap?: boolean
   isReverse?: boolean
@@ -31,11 +31,6 @@ export interface SurveyItem {
 export interface SurveySettings {
   title: string
   surveyContext: string
-  description?: string
-  constructName?: string
-  constructDescription?: string
-  trapEnabled: boolean
-  reverseEnabled: boolean
 }
 
 export interface EvaluateItemQualityRequest {
@@ -80,7 +75,21 @@ export interface ReliabilityRespondent {
   reason: string
 }
 
+export type ReliabilityLevel = 'high' | 'mid' | 'low'
+
+export interface ReliabilityBucket {
+  level: ReliabilityLevel
+  label: string
+  count: number
+}
+
 export interface SurveyReliabilityResponse {
+  survey_id?: string
+  total_count?: number
+  high_count?: number
+  mid_count?: number
+  low_count?: number
+  distribution?: ReliabilityBucket[]
   respondents: ReliabilityRespondent[]
 }
 
@@ -120,6 +129,8 @@ export interface BackendSurveyCreatePayload {
   items: BackendSurveyItemCreate[]
 }
 
+export type BackendSurveyUpdatePayload = BackendSurveyCreatePayload
+
 export interface BackendSurveyItemOption {
   option_id: string
   option_order: number
@@ -150,6 +161,23 @@ export interface BackendSurveyResponse {
   status?: string
   items: BackendSurveyItem[]
   message?: string
+}
+
+export interface SurveySummary {
+  survey_id: string
+  title: string
+  description?: string | null
+  construct_name?: string | null
+  construct_description?: string | null
+  status?: string
+  item_count: number
+  normal_item_count: number
+  response_count: number
+  last_response_at?: string | null
+}
+
+export interface SurveyListResponse {
+  surveys: SurveySummary[]
 }
 
 export interface ResponseAnswerSubmit {
@@ -316,6 +344,8 @@ export interface StatisticsEvaluationResponse {
   stat_eval_id?: string
   survey_id: string
   response_count: number
+  raw_response_count?: number
+  excluded_response_count?: number
   item_count?: number
   cronbach_alpha?: number | null
   alpha_status?: EvaluationStatus

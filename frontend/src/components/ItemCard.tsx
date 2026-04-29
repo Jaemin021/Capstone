@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react'
-import { AlertTriangle, BadgeCheck, CheckSquare, Trash2 } from 'lucide-react'
+import { AlertTriangle, BadgeCheck, Trash2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { SurveyItem } from '../types/survey'
 import { ReliabilityBadge } from './ReliabilityBadge'
 
 /**
  * 컴포넌트: ItemCard
- * 역할: 문항 하나를 목록에서 표시하고 선택, 삭제, 역문항 설정, 품질/CITC 상태를 보여준다.
+ * 역할: 문항 하나를 목록에서 표시하고 선택, 삭제, 품질/CITC 상태를 보여준다.
  */
 export interface ItemCardProps {
   item: SurveyItem
@@ -14,7 +14,6 @@ export interface ItemCardProps {
   isSelected: boolean
   onSelect: () => void
   onDelete: () => void
-  onToggleReverse: (checked: boolean) => void
   dragActivator?: ReactNode
 }
 
@@ -31,7 +30,6 @@ export function ItemCard({
   isSelected,
   onSelect,
   onDelete,
-  onToggleReverse,
   dragActivator,
 }: ItemCardProps) {
   const isLowCitc = item.citc ? item.citc.citcScore < 0.55 : false
@@ -96,17 +94,6 @@ export function ItemCard({
           </span>
         ) : null}
       </div>
-
-      <label className="mt-3 flex items-center gap-2 text-xs font-semibold text-slate-600">
-        <input
-          type="checkbox"
-          className="h-4 w-4 rounded border-slate-300 text-teal-600"
-          checked={Boolean(item.isReverse)}
-          onChange={(event) => onToggleReverse(event.target.checked)}
-        />
-        <CheckSquare size={14} />
-        역문항으로 설정
-      </label>
     </article>
   )
 }

@@ -5,15 +5,11 @@ from fastapi import APIRouter
 from database import SessionLocal
 import models
 
-from services.survey_statistical_evaluation_service import evaluate_survey_statistics
-from services.item_construct_evaluation_service import evaluate_construct_for_survey
-
-from services.item_quality_dictionary import (
-    AMBIGUOUS_TERMS,
-    NEGATIVE_TERMS,
-    LEADING_TERMS,
-    DOUBLE_BARRELED_HINTS
+from services.survey_statistical_evaluation_service import (
+    evaluate_survey_statistics,
+    build_response_score_matrix,
 )
+from services.item_construct_evaluation_service import evaluate_construct_for_survey
 
 from services.item_quality_llm_service import evaluate_item_with_llm
 from services.item_quality_score_service import calculate_quality_score
@@ -23,10 +19,6 @@ router = APIRouter(prefix="/survey-evaluations")
 
 def now_str():
     return datetime.now().isoformat()
-
-
-def count_terms(text, dictionary):
-    return sum(1 for w in dictionary if w in text)
 
 
 def score_status(score, good=8.0, warning=6.0):
@@ -39,78 +31,118 @@ def score_status(score, good=8.0, warning=6.0):
     return "bad"
 
 
-@router.post("/{survey_id}/quality")
-def evaluate_quality(survey_id: str):
+def _evaluate_quality_without_long_db_lock(survey_id: str):
     db = SessionLocal()
 
     try:
-        # 재평가 시 기존 품질 평가 결과 삭제
-        db.query(models.ItemQualityEvaluation).filter_by(
-            survey_id=survey_id
-        ).delete()
-
         items = db.query(models.SurveyItem).filter_by(
             survey_id=survey_id,
             item_role="normal"
         ).order_by(models.SurveyItem.item_order).all()
 
-        results = []
+        item_snapshots = []
 
         for item in items:
             options = db.query(models.SurveyItemOption).filter_by(
                 item_id=item.item_id
             ).order_by(models.SurveyItemOption.option_order).all()
 
-            option_texts = [opt.option_label for opt in options]
-
-            rule = {
-                "ambiguous": count_terms(item.question_text, AMBIGUOUS_TERMS),
-                "negative": count_terms(item.question_text, NEGATIVE_TERMS),
-                "leading": count_terms(item.question_text, LEADING_TERMS),
-                "double": count_terms(item.question_text, DOUBLE_BARRELED_HINTS),
-            }
-
-            llm_result = evaluate_item_with_llm(
-                item.question_text,
-                option_texts
-            )
-
-            score = calculate_quality_score(rule, llm_result)
-
-            db_eval = models.ItemQualityEvaluation(
-                survey_id=survey_id,
-                item_id=item.item_id,
-                quality_score=score,
-                problem_categories=llm_result.get("problem_categories") if llm_result else None,
-                detected_terms=llm_result.get("detected_terms") if llm_result else None,
-                llm_comment=llm_result.get("llm_comment") if llm_result else None,
-                suggested_rewrite=llm_result.get("suggested_rewrite") if llm_result else None,
-                created_at=now_str()
-            )
-
-            db.add(db_eval)
-
-            results.append({
+            item_snapshots.append({
                 "item_id": item.item_id,
                 "item_order": item.item_order,
                 "question_text": item.question_text,
-                "quality_score": score,
-                "status": score_status(score),
-                "problem_categories": db_eval.problem_categories,
-                "detected_terms": db_eval.detected_terms,
-                "llm_comment": db_eval.llm_comment,
-                "suggested_rewrite": db_eval.suggested_rewrite
+                "option_texts": [opt.option_label for opt in options],
             })
-
-        db.commit()
-
-        return {
-            "survey_id": survey_id,
-            "results": results
-        }
 
     finally:
         db.close()
+
+    results = []
+    eval_rows = []
+    debug_errors = []
+
+    for item in item_snapshots:
+        question_text = item["question_text"]
+
+        llm_result = None
+        llm_error = None
+
+        try:
+            llm_result = evaluate_item_with_llm(
+                question_text,
+                item["option_texts"]
+            )
+        except Exception as e:
+            llm_error = repr(e)
+            debug_errors.append({
+                "item_id": item["item_id"],
+                "item_order": item["item_order"],
+                "error": llm_error
+            })
+
+        score = calculate_quality_score(llm_result)
+        problem_categories = llm_result.get("problem_categories") if isinstance(llm_result, dict) else None
+        detected_terms = llm_result.get("detected_terms") if isinstance(llm_result, dict) else None
+        llm_comment = llm_result.get("llm_comment") if isinstance(llm_result, dict) else None
+        suggested_rewrite = llm_result.get("suggested_rewrite") if isinstance(llm_result, dict) else None
+
+        eval_rows.append({
+            "survey_id": survey_id,
+            "item_id": item["item_id"],
+            "quality_score": score,
+            "problem_categories": problem_categories,
+            "detected_terms": detected_terms,
+            "llm_comment": llm_comment,
+            "suggested_rewrite": suggested_rewrite,
+            "created_at": now_str(),
+        })
+
+        results.append({
+            "item_id": item["item_id"],
+            "item_order": item["item_order"],
+            "question_text": question_text,
+            "quality_score": score,
+            "status": score_status(score),
+            "problem_categories": problem_categories,
+            "detected_terms": detected_terms,
+            "llm_comment": llm_comment,
+            "suggested_rewrite": suggested_rewrite,
+            "llm_error": llm_error
+        })
+
+    db = SessionLocal()
+
+    try:
+        db.query(models.ItemQualityEvaluation).filter_by(
+            survey_id=survey_id
+        ).delete(synchronize_session=False)
+
+        for eval_row in eval_rows:
+            db.add(models.ItemQualityEvaluation(**eval_row))
+
+        db.commit()
+
+        response = {
+            "survey_id": survey_id,
+            "results": results
+        }
+        if debug_errors:
+            response["debug"] = {
+                "errors": debug_errors
+            }
+        return response
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
+
+
+@router.post("/{survey_id}/quality")
+def evaluate_quality(survey_id: str):
+    return _evaluate_quality_without_long_db_lock(survey_id)
 
 
 @router.get("/{survey_id}/quality")
@@ -258,6 +290,8 @@ def get_statistics_results(survey_id: str):
                 "message": "No statistical evaluation found."
             }
 
+        _, _, sample_metadata = build_response_score_matrix(db, survey_id)
+
         normal_items = db.query(models.SurveyItem).filter_by(
             survey_id=survey_id,
             item_role="normal"
@@ -291,6 +325,8 @@ def get_statistics_results(survey_id: str):
         return {
             "survey_id": survey_id,
             "response_count": stat.response_count,
+            "raw_response_count": sample_metadata.get("raw_response_count", stat.response_count),
+            "excluded_response_count": sample_metadata.get("excluded_response_count", 0),
             "cronbach_alpha": stat.cronbach_alpha,
             "alpha_status": score_status(stat.cronbach_alpha, good=0.7, warning=0.6),
             "items": item_results,

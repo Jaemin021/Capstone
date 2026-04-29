@@ -1,8 +1,15 @@
 # backend/services/feature_service.py
 
 import math
+import os
 
 TOO_FAST_ABSOLUTE_THRESHOLD_MS = 1500
+OFFLINE_EXCLUSION_RATIO_THRESHOLD = float(
+    os.getenv("OFFLINE_EXCLUSION_RATIO_THRESHOLD", "0.15")
+)
+EXCLUDE_IF_CONNECTION_LOST = (
+    os.getenv("EXCLUDE_IF_CONNECTION_LOST", "1").strip().lower() not in {"0", "false", "no"}
+)
 
 
 def safe_avg(values, default=0):
@@ -27,6 +34,24 @@ def safe_max(values, default=0):
         return default
 
     return max(valid_values)
+
+
+def should_exclude_from_statistics(features):
+    if not isinstance(features, dict):
+        return False, []
+
+    reasons = []
+
+    offline_ratio = float(features.get("offline_ratio") or 0)
+    connection_lost = bool(features.get("connection_lost"))
+
+    if offline_ratio >= OFFLINE_EXCLUSION_RATIO_THRESHOLD:
+        reasons.append("offline_ratio")
+
+    if EXCLUDE_IF_CONNECTION_LOST and connection_lost:
+        reasons.append("connection_lost")
+
+    return len(reasons) > 0, reasons
 
 
 def calculate_log_features(response_log, item_logs, connection_events):
@@ -300,6 +325,10 @@ def build_compact_features(log_f, content_f, relation_f, population_f):
     reliability = calculate_reliability_summary(compact)
     compact["reliability_score"] = reliability["score"]
     compact["reliability_status"] = reliability["status"]
+    excluded, excluded_reasons = should_exclude_from_statistics(compact)
+    compact["exclude_from_statistics"] = 1 if excluded else 0
+    compact["exclude_reasons"] = excluded_reasons
+    compact["offline_exclusion_ratio_threshold"] = OFFLINE_EXCLUSION_RATIO_THRESHOLD
 
     return compact
 
@@ -324,15 +353,6 @@ def calculate_reliability_summary(features):
         if reverse_penalty > 0:
             score -= min(20, reverse_penalty)
             reasons.append("reverse_consistency")
-
-    if features.get("connection_lost"):
-        score -= 5
-        reasons.append("connection_lost")
-
-    offline_ratio = float(features.get("offline_ratio") or 0)
-    if offline_ratio > 0:
-        score -= min(10, offline_ratio * 20)
-        reasons.append("offline_ratio")
 
     change_ratio = float(features.get("answer_changed_ratio") or 0)
     if change_ratio > 0:

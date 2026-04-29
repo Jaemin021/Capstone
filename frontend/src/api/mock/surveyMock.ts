@@ -111,7 +111,25 @@ export async function mockGetSurveyReliability(): Promise<SurveyReliabilityRespo
     }
   })
 
-  return { respondents }
+  const high_count = respondents.filter((row) => row.reliabilityScore >= 75).length
+  const mid_count = respondents.filter(
+    (row) => row.reliabilityScore >= 55 && row.reliabilityScore < 75,
+  ).length
+  const low_count = respondents.filter((row) => row.reliabilityScore < 55).length
+
+  return {
+    survey_id: 'mock-survey',
+    total_count: respondents.length,
+    high_count,
+    mid_count,
+    low_count,
+    distribution: [
+      { level: 'high', label: '상', count: high_count },
+      { level: 'mid', label: '중', count: mid_count },
+      { level: 'low', label: '하', count: low_count },
+    ],
+    respondents,
+  }
 }
 
 export async function mockGetSurveyItemStats(): Promise<ItemStatsResponse> {

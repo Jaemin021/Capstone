@@ -22,6 +22,7 @@ def evaluate_construct_for_survey(db, survey_id: str, overwrite: bool = True):
     ).order_by(models.SurveyItem.item_order).all()
 
     results = []
+    debug_errors = []
 
     for item in normal_items:
         if overwrite:
@@ -34,19 +35,39 @@ def evaluate_construct_for_survey(db, survey_id: str, overwrite: bool = True):
                 db.delete(old_eval)
                 db.commit()
 
-        embedding_result = evaluate_embedding_construct_features(
-            target_item=item,
-            survey=survey,
-            normal_items=normal_items
-        )
+        item_errors = []
+        embedding_result = {
+            "embedding_features": None,
+            "embedding_score": None
+        }
+        llm_features = None
+        llm_score = None
 
-        llm_features = evaluate_llm_construct_features(
-            target_item=item,
-            survey=survey,
-            normal_items=normal_items
-        )
+        try:
+            embedding_result = evaluate_embedding_construct_features(
+                target_item=item,
+                survey=survey,
+                normal_items=normal_items
+            )
+        except Exception as e:
+            item_errors.append(f"embedding failed: {repr(e)}")
 
-        llm_score = calculate_llm_construct_score(llm_features)
+        try:
+            llm_features = evaluate_llm_construct_features(
+                target_item=item,
+                survey=survey,
+                normal_items=normal_items
+            )
+            llm_score = calculate_llm_construct_score(llm_features)
+        except Exception as e:
+            item_errors.append(f"llm failed: {repr(e)}")
+
+        if item_errors:
+            debug_errors.append({
+                "item_id": item.item_id,
+                "item_order": item.item_order,
+                "errors": item_errors
+            })
 
         db_eval = models.ConstructEvaluation(
             survey_id=survey_id,
@@ -73,12 +94,20 @@ def evaluate_construct_for_survey(db, survey_id: str, overwrite: bool = True):
             "embedding_score": embedding_result["embedding_score"],
             "llm_features": llm_features,
             "llm_score": llm_score,
-            "predicted_citc": None
+            "predicted_citc": None,
+            "errors": item_errors if item_errors else None
         })
 
-    return {
+    response = {
         "survey_id": survey_id,
         "item_count": len(results),
         "results": results,
         "message": "construct evaluation created"
     }
+
+    if debug_errors:
+        response["debug"] = {
+            "errors": debug_errors
+        }
+
+    return response
