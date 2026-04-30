@@ -180,6 +180,21 @@ export interface SurveyListResponse {
   surveys: SurveySummary[]
 }
 
+export interface PublicSurveyLinkResponse {
+  survey_id: string
+  access_key: string
+  public_path: string
+  created: boolean
+  message?: string
+}
+
+export interface PublicSurveyAvailabilityResponse {
+  survey_id: string
+  available: boolean
+  reason?: string | null
+  message?: string
+}
+
 export interface ResponseAnswerSubmit {
   item_id: string
   selected_option_id?: string | null

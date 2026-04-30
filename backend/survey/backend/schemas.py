@@ -117,6 +117,14 @@ class ResponseCreate(BaseModel):
     log: ResponseLogCreate
 
 
+class SurveyShareLinkCreate(BaseModel):
+    rotate: bool = False
+
+
+class PublicResponseCreate(ResponseCreate):
+    device_id: str
+
+
 class ItemQualityResult(BaseModel):
     item_id: str
     quality_score: float

@@ -24,6 +24,8 @@ import type {
   ItemQualityResult,
   ItemStatsResponse,
   QualityEvaluationResponse,
+  PublicSurveyAvailabilityResponse,
+  PublicSurveyLinkResponse,
   StatisticsEvaluationResponse,
   SurveyListResponse,
   SurveyReliabilityResponse,
@@ -212,6 +214,86 @@ export async function getSurvey(surveyId: string): Promise<BackendSurveyResponse
   return data
 }
 
+export async function createPublicSurveyLink(
+  surveyId: string,
+  rotate = false,
+): Promise<PublicSurveyLinkResponse> {
+  if (useMockApi) {
+    const keyStorage = `mock-public-link:${surveyId}`
+    const existing = window.localStorage.getItem(keyStorage)
+    const accessKey =
+      existing && !rotate
+        ? existing
+        : `mock-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+
+    window.localStorage.setItem(keyStorage, accessKey)
+
+    return {
+      survey_id: surveyId,
+      access_key: accessKey,
+      public_path: `/public/s/${accessKey}`,
+      created: !existing || rotate,
+      message: 'mock public link ready',
+    }
+  }
+
+  const { data } = await http.post<PublicSurveyLinkResponse>(`/surveys/${surveyId}/public-link`, {
+    rotate,
+  })
+  return data
+}
+
+export async function getPublicSurvey(accessKey: string): Promise<BackendSurveyResponse> {
+  if (useMockApi) {
+    const surveyKey = Object.keys(window.localStorage).find((key) => {
+      if (!key.startsWith('mock-public-link:')) {
+        return false
+      }
+
+      const value = window.localStorage.getItem(key)
+      return value === accessKey
+    })
+
+    if (!surveyKey) {
+      throw new Error('Mock public survey not found')
+    }
+
+    const surveyId = surveyKey.replace('mock-public-link:', '')
+    return getSurvey(surveyId)
+  }
+
+  const { data } = await http.get<BackendSurveyResponse>(`/surveys/public/${accessKey}`)
+  return data
+}
+
+export async function getPublicSurveyAvailability(
+  accessKey: string,
+  deviceId: string,
+): Promise<PublicSurveyAvailabilityResponse> {
+  if (useMockApi) {
+    const survey = await getPublicSurvey(accessKey)
+    const marker = `mock-public-submitted:${survey.survey_id}:${deviceId}`
+    const submitted = window.localStorage.getItem(marker) === '1'
+
+    return {
+      survey_id: survey.survey_id,
+      available: !submitted,
+      reason: submitted ? 'already_submitted' : null,
+      message: submitted ? 'already submitted from this device' : 'Survey is available.',
+    }
+  }
+
+  const { data } = await http.get<PublicSurveyAvailabilityResponse>(
+    `/surveys/public/${accessKey}/availability`,
+    {
+      params: {
+        device_id: deviceId,
+      },
+    },
+  )
+  return data
+}
+
 export async function getSurveyList(): Promise<SurveyListResponse> {
   if (useMockApi) {
     const surveys = Object.keys(window.localStorage)
@@ -315,6 +397,35 @@ export async function submitSurveyResponse(
     payload,
   )
   saveResponseResultToStorage(surveyId, data)
+  return data
+}
+
+export async function submitPublicSurveyResponse(
+  accessKey: string,
+  deviceId: string,
+  payload: SurveyResponseSubmitPayload,
+): Promise<SurveyResponseSubmitResult> {
+  if (useMockApi) {
+    const survey = await getPublicSurvey(accessKey)
+    const marker = `mock-public-submitted:${survey.survey_id}:${deviceId}`
+    const alreadySubmitted = window.localStorage.getItem(marker) === '1'
+
+    if (alreadySubmitted) {
+      throw new Error('already submitted from this device')
+    }
+
+    const result = await submitSurveyResponse(survey.survey_id, payload)
+    window.localStorage.setItem(marker, '1')
+    return result
+  }
+
+  const { data } = await http.post<SurveyResponseSubmitResult>(
+    `/surveys/public/${accessKey}/responses`,
+    {
+      ...payload,
+      device_id: deviceId,
+    },
+  )
   return data
 }
 

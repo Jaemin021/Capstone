@@ -1,5 +1,6 @@
 # backend/routers/surveys.py
 
+import uuid
 from fastapi import APIRouter, HTTPException
 from database import SessionLocal
 import models
@@ -18,6 +19,233 @@ from services.population_feature_service import calculate_population_features
 
 
 router = APIRouter(prefix="/surveys")
+
+
+def generate_access_key():
+    return uuid.uuid4().hex
+
+
+def get_survey_by_access_key(db, access_key: str):
+    return db.query(models.Survey).filter_by(
+        external_survey_key=access_key
+    ).first()
+
+
+def ensure_public_device_id(device_id: str):
+    value = (device_id or "").strip()
+
+    if len(value) < 8:
+        raise HTTPException(status_code=400, detail="device_id is too short")
+
+    if len(value) > 128:
+        raise HTTPException(status_code=400, detail="device_id is too long")
+
+    return value
+
+
+def build_survey_response(db, survey):
+    items = db.query(models.SurveyItem).filter_by(
+        survey_id=survey.survey_id
+    ).order_by(models.SurveyItem.item_order).all()
+
+    result = {
+        "survey_id": survey.survey_id,
+        "title": survey.title,
+        "description": survey.description,
+        "construct_name": survey.construct_name,
+        "construct_description": survey.construct_description,
+        "status": survey.status,
+        "items": []
+    }
+
+    for item in items:
+        options = db.query(models.SurveyItemOption).filter_by(
+            item_id=item.item_id
+        ).order_by(models.SurveyItemOption.option_order).all()
+
+        result["items"].append({
+            "item_id": item.item_id,
+            "item_order": item.item_order,
+            "question_text": item.question_text,
+            "question_type": item.question_type,
+            "item_role": item.item_role,
+            "is_generated": item.is_generated,
+            "source_item_id": item.source_item_id,
+            "trap_correct_option_order": item.trap_correct_option_order,
+            "reverse_expected_rule": item.reverse_expected_rule,
+            "options": [
+                {
+                    "option_id": opt.option_id,
+                    "option_order": opt.option_order,
+                    "option_label": opt.option_label,
+                    "option_score": opt.option_score
+                }
+                for opt in options
+            ]
+        })
+
+    return result
+
+
+def create_response_and_features(db, survey_id: str, response: schemas.ResponseCreate):
+    db_res = models.Response(
+        survey_id=survey_id,
+        respondent_id=response.respondent_id,
+        started_at=response.started_at,
+        submitted_at=response.submitted_at,
+        is_completed=response.is_completed,
+        label=response.label
+    )
+    db.add(db_res)
+    db.commit()
+    db.refresh(db_res)
+
+    response_id = db_res.response_id
+
+    for ans in response.answers:
+        selected_score = (
+            ans.selected_score
+            if ans.selected_score is not None
+            else ans.selected_option_order
+        )
+
+        db_answer = models.ResponseAnswer(
+            response_id=response_id,
+            survey_id=survey_id,
+            item_id=ans.item_id,
+            selected_option_id=ans.selected_option_id,
+            selected_option_order=ans.selected_option_order,
+            selected_score=selected_score,
+            answer_text=ans.answer_text,
+            answered_at=ans.answered_at
+        )
+        db.add(db_answer)
+
+    db_log = models.ResponseLog(
+        response_id=response_id,
+        survey_id=survey_id,
+        started_at=response.log.started_at,
+        submitted_at=response.log.submitted_at,
+        total_time_ms=response.log.total_time_ms,
+        total_touch_count=response.log.total_touch_count,
+        connection_lost=response.log.connection_lost,
+        offline_count=response.log.offline_count,
+        offline_total_ms=response.log.offline_total_ms
+    )
+    db.add(db_log)
+
+    for il in response.log.item_logs:
+        db_item_log = models.ResponseItemLog(
+            response_id=response_id,
+            survey_id=survey_id,
+            item_id=il.item_id,
+            checked_at=il.checked_at,
+            previous_checked_at=il.previous_checked_at,
+            entered_at=il.entered_at,
+            first_selected_at=il.first_selected_at,
+            last_selected_at=il.last_selected_at,
+            last_exited_at=il.last_exited_at,
+            item_time_ms=il.item_time_ms,
+            time_share=il.time_share,
+            time_to_first_answer_ms=il.time_to_first_answer_ms,
+            time_after_last_answer_ms=il.time_after_last_answer_ms,
+            touch_count=il.touch_count,
+            change_count=il.change_count,
+            visit_count=il.visit_count,
+            back_visit_count=il.back_visit_count,
+            is_revisited=il.is_revisited,
+            initial_visit_time_ms=il.initial_visit_time_ms,
+            revisit_time_ms=il.revisit_time_ms,
+            answer_changed=il.answer_changed,
+            changed_after_revisit=il.changed_after_revisit,
+            first_selected_option_order=il.first_selected_option_order,
+            final_selected_option_order=il.final_selected_option_order
+        )
+        db.add(db_item_log)
+
+    for event in response.log.connection_events:
+        db_event = models.ConnectionEvent(
+            response_id=response_id,
+            survey_id=survey_id,
+            event_type=event.event_type,
+            timestamp=event.timestamp
+        )
+        db.add(db_event)
+
+    db.commit()
+
+    saved_answers = db.query(models.ResponseAnswer).filter_by(
+        response_id=response_id
+    ).all()
+
+    survey_items = db.query(models.SurveyItem).filter_by(
+        survey_id=survey_id
+    ).all()
+
+    saved_item_logs = db.query(models.ResponseItemLog).filter_by(
+        response_id=response_id
+    ).all()
+
+    saved_connection_events = db.query(models.ConnectionEvent).filter_by(
+        response_id=response_id
+    ).all()
+
+    log_features = calculate_log_features(
+        response_log=db_log,
+        item_logs=saved_item_logs,
+        connection_events=saved_connection_events
+    )
+
+    content_features = calculate_content_features(
+        answers=saved_answers,
+        survey_items=survey_items
+    )
+
+    relation_features = calculate_relation_features(
+        answers=saved_answers,
+        survey_items=survey_items
+    )
+
+    population_features = calculate_population_features(
+        db=db,
+        survey_id=survey_id,
+        response_id=response_id
+    )
+
+    compact_features = build_compact_features(
+        log_f=log_features,
+        content_f=content_features,
+        relation_f=relation_features,
+        population_f=population_features
+    )
+
+    db_feature = models.ResponseFeature(
+        response_id=response_id,
+        survey_id=survey_id,
+        log_features=log_features,
+        content_features=content_features,
+        population_features=population_features,
+        relation_features=relation_features,
+        compact_features=compact_features,
+        created_at=response.submitted_at
+    )
+
+    db.add(db_feature)
+    db.commit()
+    db.refresh(db_feature)
+
+    return {
+        "response_id": response_id,
+        "survey_id": survey_id,
+        "response_feature_id": db_feature.response_feature_id,
+        "log_features": log_features,
+        "content_features": content_features,
+        "population_features": population_features,
+        "relation_features": relation_features,
+        "features": compact_features,
+        "reliability": calculate_reliability_summary(compact_features),
+        "message": "response and features created"
+    }
 
 
 @router.get("/")
@@ -676,6 +904,118 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
         db.close()
 
 
+@router.post("/{survey_id}/public-link")
+def create_or_get_public_link(survey_id: str, payload: schemas.SurveyShareLinkCreate):
+    db = SessionLocal()
+
+    try:
+        survey = db.query(models.Survey).filter_by(survey_id=survey_id).first()
+        if survey is None:
+            raise HTTPException(status_code=404, detail="survey not found")
+
+        if payload.rotate or not survey.external_survey_key:
+            survey.external_survey_key = generate_access_key()
+            db.commit()
+            db.refresh(survey)
+            created = True
+        else:
+            created = False
+
+        return {
+            "survey_id": survey.survey_id,
+            "access_key": survey.external_survey_key,
+            "public_path": f"/public/s/{survey.external_survey_key}",
+            "created": created,
+            "message": "public link ready"
+        }
+
+    finally:
+        db.close()
+
+
+@router.get("/public/{access_key}")
+def get_public_survey(access_key: str):
+    db = SessionLocal()
+
+    try:
+        survey = get_survey_by_access_key(db, access_key)
+        if survey is None:
+            raise HTTPException(status_code=404, detail="public survey not found")
+
+        return build_survey_response(db, survey)
+
+    finally:
+        db.close()
+
+
+@router.get("/public/{access_key}/availability")
+def get_public_survey_availability(access_key: str, device_id: str):
+    db = SessionLocal()
+
+    try:
+        survey = get_survey_by_access_key(db, access_key)
+        if survey is None:
+            raise HTTPException(status_code=404, detail="public survey not found")
+
+        normalized_device_id = ensure_public_device_id(device_id)
+        respondent_id = f"device:{normalized_device_id}"
+
+        existing = db.query(models.Response.response_id).filter_by(
+            survey_id=survey.survey_id,
+            respondent_id=respondent_id,
+            is_completed=True
+        ).first()
+
+        if existing is not None:
+            return {
+                "survey_id": survey.survey_id,
+                "available": False,
+                "reason": "already_submitted",
+                "message": "This device already submitted the survey."
+            }
+
+        return {
+            "survey_id": survey.survey_id,
+            "available": True,
+            "reason": None,
+            "message": "Survey is available."
+        }
+
+    finally:
+        db.close()
+
+
+@router.post("/public/{access_key}/responses")
+def create_public_response(access_key: str, response: schemas.PublicResponseCreate):
+    db = SessionLocal()
+
+    try:
+        survey = get_survey_by_access_key(db, access_key)
+        if survey is None:
+            raise HTTPException(status_code=404, detail="public survey not found")
+
+        normalized_device_id = ensure_public_device_id(response.device_id)
+        respondent_id = f"device:{normalized_device_id}"
+
+        existing = db.query(models.Response.response_id).filter_by(
+            survey_id=survey.survey_id,
+            respondent_id=respondent_id,
+            is_completed=True
+        ).first()
+
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="already submitted from this device"
+            )
+
+        response.respondent_id = respondent_id
+        return create_response_and_features(db, survey.survey_id, response)
+
+    finally:
+        db.close()
+
+
 @router.get("/{survey_id}")
 def get_survey(survey_id: str):
     db = SessionLocal()
@@ -688,46 +1028,7 @@ def get_survey(survey_id: str):
         db.close()
         return {"error": "survey not found"}
 
-    items = db.query(models.SurveyItem).filter_by(
-        survey_id=survey_id
-    ).order_by(models.SurveyItem.item_order).all()
-
-    result = {
-        "survey_id": survey.survey_id,
-        "title": survey.title,
-        "description": survey.description,
-        "construct_name": survey.construct_name,
-        "construct_description": survey.construct_description,
-        "status": survey.status,
-        "items": []
-    }
-
-    for item in items:
-        options = db.query(models.SurveyItemOption).filter_by(
-            item_id=item.item_id
-        ).order_by(models.SurveyItemOption.option_order).all()
-
-        result["items"].append({
-            "item_id": item.item_id,
-            "item_order": item.item_order,
-            "question_text": item.question_text,
-            "question_type": item.question_type,
-            "item_role": item.item_role,
-            "is_generated": item.is_generated,
-            "source_item_id": item.source_item_id,
-            "trap_correct_option_order": item.trap_correct_option_order,
-            "reverse_expected_rule": item.reverse_expected_rule,
-            "options": [
-                {
-                    "option_id": opt.option_id,
-                    "option_order": opt.option_order,
-                    "option_label": opt.option_label,
-                    "option_score": opt.option_score
-                }
-                for opt in options
-            ]
-        })
-
+    result = build_survey_response(db, survey)
     db.close()
     return result
 
@@ -879,174 +1180,10 @@ def delete_survey(survey_id: str):
 @router.post("/{survey_id}/responses")
 def create_response(survey_id: str, response: schemas.ResponseCreate):
     db = SessionLocal()
-
-    db_res = models.Response(
-        survey_id=survey_id,
-        respondent_id=response.respondent_id,
-        started_at=response.started_at,
-        submitted_at=response.submitted_at,
-        is_completed=response.is_completed,
-        label=response.label
-    )
-    db.add(db_res)
-    db.commit()
-    db.refresh(db_res)
-
-    response_id = db_res.response_id
-
-    for ans in response.answers:
-        selected_score = (
-            ans.selected_score
-            if ans.selected_score is not None
-            else ans.selected_option_order
-        )
-
-        db_answer = models.ResponseAnswer(
-            response_id=response_id,
-            survey_id=survey_id,
-            item_id=ans.item_id,
-            selected_option_id=ans.selected_option_id,
-            selected_option_order=ans.selected_option_order,
-            selected_score=selected_score,
-            answer_text=ans.answer_text,
-            answered_at=ans.answered_at
-        )
-        db.add(db_answer)
-
-    db_log = models.ResponseLog(
-        response_id=response_id,
-        survey_id=survey_id,
-        started_at=response.log.started_at,
-        submitted_at=response.log.submitted_at,
-        total_time_ms=response.log.total_time_ms,
-        total_touch_count=response.log.total_touch_count,
-        connection_lost=response.log.connection_lost,
-        offline_count=response.log.offline_count,
-        offline_total_ms=response.log.offline_total_ms
-    )
-    db.add(db_log)
-
-    for il in response.log.item_logs:
-        db_item_log = models.ResponseItemLog(
-            response_id=response_id,
-            survey_id=survey_id,
-            item_id=il.item_id,
-
-            checked_at=il.checked_at,
-            previous_checked_at=il.previous_checked_at,
-
-            entered_at=il.entered_at,
-            first_selected_at=il.first_selected_at,
-            last_selected_at=il.last_selected_at,
-            last_exited_at=il.last_exited_at,
-
-            item_time_ms=il.item_time_ms,
-            time_share=il.time_share,
-            time_to_first_answer_ms=il.time_to_first_answer_ms,
-            time_after_last_answer_ms=il.time_after_last_answer_ms,
-
-            touch_count=il.touch_count,
-            change_count=il.change_count,
-
-            visit_count=il.visit_count,
-            back_visit_count=il.back_visit_count,
-            is_revisited=il.is_revisited,
-            initial_visit_time_ms=il.initial_visit_time_ms,
-            revisit_time_ms=il.revisit_time_ms,
-
-            answer_changed=il.answer_changed,
-            changed_after_revisit=il.changed_after_revisit,
-            first_selected_option_order=il.first_selected_option_order,
-            final_selected_option_order=il.final_selected_option_order
-        )
-        db.add(db_item_log)
-
-    for event in response.log.connection_events:
-        db_event = models.ConnectionEvent(
-            response_id=response_id,
-            survey_id=survey_id,
-            event_type=event.event_type,
-            timestamp=event.timestamp
-        )
-        db.add(db_event)
-
-    db.commit()
-
-    saved_answers = db.query(models.ResponseAnswer).filter_by(
-        response_id=response_id
-    ).all()
-
-    survey_items = db.query(models.SurveyItem).filter_by(
-        survey_id=survey_id
-    ).all()
-
-    saved_item_logs = db.query(models.ResponseItemLog).filter_by(
-        response_id=response_id
-    ).all()
-
-    saved_connection_events = db.query(models.ConnectionEvent).filter_by(
-        response_id=response_id
-    ).all()
-
-    log_features = calculate_log_features(
-        response_log=db_log,
-        item_logs=saved_item_logs,
-        connection_events=saved_connection_events
-    )
-
-    content_features = calculate_content_features(
-        answers=saved_answers,
-        survey_items=survey_items
-    )
-
-    relation_features = calculate_relation_features(
-        answers=saved_answers,
-        survey_items=survey_items
-    )
-
-    population_features = calculate_population_features(
-        db=db,
-        survey_id=survey_id,
-        response_id=response_id
-    )
-
-    compact_features = build_compact_features(
-        log_f=log_features,
-        content_f=content_features,
-        relation_f=relation_features,
-        population_f=population_features
-    )
-
-    db_feature = models.ResponseFeature(
-        response_id=response_id,
-        survey_id=survey_id,
-        log_features=log_features,
-        content_features=content_features,
-        population_features=population_features,
-        relation_features=relation_features,
-        compact_features=compact_features,
-        created_at=response.submitted_at
-    )
-
-    db.add(db_feature)
-    db.commit()
-    db.refresh(db_feature)
-
-    result = {
-        "response_id": response_id,
-        "survey_id": survey_id,
-        "response_feature_id": db_feature.response_feature_id,
-        "log_features": log_features,
-        "content_features": content_features,
-        "population_features": population_features,
-        "relation_features": relation_features,
-        "features": compact_features,
-        "reliability": calculate_reliability_summary(compact_features),
-        "message": "response and features created"
-    }
-
-    db.close()
-    return result
+    try:
+        return create_response_and_features(db, survey_id, response)
+    finally:
+        db.close()
 
 
 @router.post("/{survey_id}/refresh-population-features")

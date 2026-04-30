@@ -3,8 +3,11 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
+  getPublicSurvey,
+  getPublicSurveyAvailability,
   getSurvey,
   saveResponseResultToStorage,
+  submitPublicSurveyResponse,
   submitSurveyResponse,
 } from '../api/surveyApi'
 import { LoadingSpinner } from '../components/LoadingSpinner'
@@ -40,6 +43,26 @@ interface ResponseSession {
 
 const nowIso = () => new Date().toISOString()
 const nowMs = () => Date.now()
+const publicDeviceStorageKey = 'survey-public-device-id'
+
+function getOrCreatePublicDeviceId() {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+
+  const existing = window.localStorage.getItem(publicDeviceStorageKey)
+  if (existing) {
+    return existing
+  }
+
+  const created =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+  window.localStorage.setItem(publicDeviceStorageKey, created)
+  return created
+}
 
 function createEmptyItemLog(itemId: string, enteredAt: string, enteredAtMs: number): DraftItemLog {
   return {
@@ -134,24 +157,45 @@ function getRoleBadge(item: BackendSurveyItem) {
 }
 
 export function SurveyRespondPage() {
-  const { id = '' } = useParams()
+  const { id = '', accessKey = '' } = useParams()
+  const isPublicMode = Boolean(accessKey)
+  const surveyIdentifier = isPublicMode ? accessKey : id
   const navigate = useNavigate()
   const { pushToast } = useToastStore()
   const sessionRef = useRef<ResponseSession | null>(null)
   const initializedRef = useRef(false)
   const [session, setSession] = useState<ResponseSession | null>(null)
   const [currentIndex, setCurrentIndex] = useState(0)
+  const publicDeviceId = useMemo(
+    () => (isPublicMode ? getOrCreatePublicDeviceId() : ''),
+    [isPublicMode],
+  )
 
   const surveyQuery = useQuery({
-    queryKey: ['survey', id],
-    queryFn: () => getSurvey(id),
-    enabled: Boolean(id),
+    queryKey: ['survey', isPublicMode ? 'public' : 'private', surveyIdentifier],
+    queryFn: () => (isPublicMode ? getPublicSurvey(accessKey) : getSurvey(id)),
+    enabled: Boolean(surveyIdentifier),
+  })
+
+  const publicAvailabilityQuery = useQuery({
+    queryKey: ['public-availability', accessKey, publicDeviceId],
+    queryFn: () => getPublicSurveyAvailability(accessKey, publicDeviceId),
+    enabled: isPublicMode && surveyQuery.isSuccess && Boolean(accessKey) && Boolean(publicDeviceId),
+    retry: false,
   })
 
   const survey = surveyQuery.data
   const items = useMemo(() => survey?.items ?? [], [survey])
   const currentItem = items[currentIndex]
   const progress = items.length > 0 ? ((currentIndex + 1) / items.length) * 100 : 0
+  const isPublicBlocked = isPublicMode && publicAvailabilityQuery.data?.available === false
+
+  useEffect(() => {
+    initializedRef.current = false
+    sessionRef.current = null
+    setSession(null)
+    setCurrentIndex(0)
+  }, [surveyIdentifier, isPublicMode])
 
   const commitSession = (updater: (value: ResponseSession) => ResponseSession) => {
     if (!sessionRef.current) {
@@ -238,17 +282,40 @@ export function SurveyRespondPage() {
   }
 
   const submitMutation = useMutation({
-    mutationFn: (payload: SurveyResponseSubmitPayload) => submitSurveyResponse(id, payload),
+    mutationFn: (payload: SurveyResponseSubmitPayload) =>
+      isPublicMode
+        ? submitPublicSurveyResponse(accessKey, publicDeviceId, payload)
+        : submitSurveyResponse(id, payload),
     onSuccess: (result) => {
+      if (isPublicMode) {
+        pushToast({
+          type: 'success',
+          title: '설문 제출 완료',
+          description: '응답이 정상적으로 저장되었습니다.',
+        })
+        navigate(`/public/s/${accessKey}/complete`, { replace: true })
+        return
+      }
+
       saveResponseResultToStorage(id, result)
       pushToast({
         type: 'success',
         title: '응답 제출 완료',
-        description: '백엔드가 응답 로그를 저장하고 feature를 계산했습니다.',
+        description: '백엔드에서 응답 로그를 저장하고 feature를 계산했습니다.',
       })
       navigate(`/survey/${id}/results`, { state: { responseResult: result } })
     },
-    onError: () => {
+    onError: (error) => {
+      const status = (error as { response?: { status?: number } })?.response?.status
+      if (status === 409) {
+        pushToast({
+          type: 'error',
+          title: '이미 응답한 기기입니다',
+          description: '같은 기기에서는 한 번만 응답할 수 있습니다.',
+        })
+        return
+      }
+
       pushToast({
         type: 'error',
         title: '응답 제출 실패',
@@ -256,9 +323,8 @@ export function SurveyRespondPage() {
       })
     },
   })
-
   useEffect(() => {
-    if (!survey || initializedRef.current || items.length === 0) {
+    if (!survey || initializedRef.current || items.length === 0 || isPublicBlocked) {
       return
     }
 
@@ -267,7 +333,7 @@ export function SurveyRespondPage() {
     const startedAtMs = nowMs()
     const firstItem = items[0]
     const initialSession: ResponseSession = {
-      respondentId: `user-${startedAtMs}`,
+      respondentId: isPublicMode ? `device:${publicDeviceId}` : `user-${startedAtMs}`,
       startedAt,
       startedAtMs,
       totalTouchCount: 0,
@@ -284,7 +350,7 @@ export function SurveyRespondPage() {
 
     sessionRef.current = initialSession
     setSession(initialSession)
-  }, [items, survey])
+  }, [items, survey, isPublicBlocked, isPublicMode, publicDeviceId])
 
   useEffect(() => {
     const handleOffline = () => {
@@ -435,6 +501,24 @@ export function SurveyRespondPage() {
   }
 
   const handleSubmit = () => {
+    if (isPublicMode && !publicDeviceId) {
+      pushToast({
+        type: 'error',
+        title: '기기 식별 정보를 확인하지 못했습니다',
+        description: '페이지를 새로고침한 뒤 다시 시도해 주세요.',
+      })
+      return
+    }
+
+    if (isPublicBlocked) {
+      pushToast({
+        type: 'error',
+        title: '이미 응답한 기기입니다',
+        description: '같은 기기에서는 한 번만 응답할 수 있습니다.',
+      })
+      return
+    }
+
     const touched = recordTouch()
     const baseSession = touched ?? sessionRef.current
 
@@ -515,6 +599,46 @@ export function SurveyRespondPage() {
     )
   }
 
+  if (isPublicMode && publicAvailabilityQuery.isLoading) {
+    return (
+      <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+        <LoadingSpinner label="응답 가능 여부를 확인하는 중" />
+      </section>
+    )
+  }
+
+  if (isPublicMode && publicAvailabilityQuery.isError) {
+    return (
+      <section className="rounded-lg border border-rose-200 bg-white p-6 shadow-sm">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-1 text-rose-600" size={20} />
+          <div>
+            <h1 className="text-lg font-black text-slate-950">응답 상태 확인에 실패했습니다</h1>
+            <p className="mt-1 text-sm text-slate-600">
+              네트워크 상태를 확인한 뒤 다시 시도해 주세요.
+            </p>
+          </div>
+        </div>
+      </section>
+    )
+  }
+
+  if (isPublicBlocked) {
+    return (
+      <section className="rounded-lg border border-amber-200 bg-white p-6 shadow-sm">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-1 text-amber-600" size={20} />
+          <div>
+            <h1 className="text-lg font-black text-slate-950">이미 제출된 설문입니다</h1>
+            <p className="mt-1 text-sm text-slate-600">
+              이 링크는 한 기기에서 한 번만 응답할 수 있습니다. 같은 기기에서는 재응답이 제한됩니다.
+            </p>
+          </div>
+        </div>
+      </section>
+    )
+  }
+
   if (surveyQuery.isError || !survey || items.length === 0) {
     return (
       <section className="rounded-lg border border-rose-200 bg-white p-6 shadow-sm">
@@ -523,7 +647,7 @@ export function SurveyRespondPage() {
           <div>
             <h1 className="text-lg font-black text-slate-950">설문을 불러올 수 없습니다</h1>
             <p className="mt-1 text-sm text-slate-600">
-              survey_id가 올바른지, 백엔드 서버가 실행 중인지 확인해 주세요.
+              링크 또는 설문 ID가 올바른지, 백엔드 서버가 실행 중인지 확인해 주세요.
             </p>
           </div>
         </div>

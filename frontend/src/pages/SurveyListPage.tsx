@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BarChart3, Copy, ExternalLink, FilePenLine, FilePlus2, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { deleteSurvey, getSurveyList } from '../api/surveyApi'
+import { createPublicSurveyLink, deleteSurvey, getSurveyList } from '../api/surveyApi'
 import { LoadingSpinner } from '../components/LoadingSpinner'
 import { useSurveyStore } from '../store/surveyStore'
 import { useToastStore } from '../store/toastStore'
@@ -20,6 +20,7 @@ export function SurveyListPage() {
   const surveys = surveyListQuery.data?.surveys ?? []
   const origin = typeof window === 'undefined' ? '' : window.location.origin
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null)
+  const [publicLinkLoadingId, setPublicLinkLoadingId] = useState<string | null>(null)
 
   const deleteSurveyMutation = useMutation<void, Error, string, { previous?: SurveyListResponse }>({
     mutationFn: deleteSurvey,
@@ -60,22 +61,36 @@ export function SurveyListPage() {
     },
   })
 
-  const copyRespondLink = async (surveyId: string) => {
-    const url = `${origin}/survey/${surveyId}/respond`
+  const copyPublicRespondLink = async (surveyId: string) => {
+    setPublicLinkLoadingId(surveyId)
 
     try {
-      await navigator.clipboard.writeText(url)
+      const link = await createPublicSurveyLink(surveyId, false)
+      const url = `${origin}${link.public_path}`
+
+      try {
+        await navigator.clipboard.writeText(url)
+        pushToast({
+          type: 'success',
+          title: '공유 링크 복사 완료',
+          description: url,
+        })
+      } catch {
+        pushToast({
+          type: 'info',
+          title: '공유 링크',
+          description: url,
+        })
+      }
+    } catch (error) {
+      console.error('[survey-list] create public link failed', error)
       pushToast({
-        type: 'success',
-        title: '응답 링크 복사 완료',
-        description: url,
+        type: 'error',
+        title: '공유 링크 생성 실패',
+        description: '링크 생성 중 오류가 발생했습니다.',
       })
-    } catch {
-      pushToast({
-        type: 'info',
-        title: '응답 링크',
-        description: url,
-      })
+    } finally {
+      setPublicLinkLoadingId(null)
     }
   }
 
@@ -118,6 +133,7 @@ export function SurveyListPage() {
             {surveys.map((survey) => {
               const deletingId = deleteSurveyMutation.variables
               const isDeletingThis = deleteSurveyMutation.isPending && deletingId === survey.survey_id
+              const isGeneratingPublicLink = publicLinkLoadingId === survey.survey_id
 
               return (
                 <article key={survey.survey_id} className="rounded-lg border border-slate-200 p-4">
@@ -148,10 +164,17 @@ export function SurveyListPage() {
                       <button
                         type="button"
                         className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                        onClick={() => copyRespondLink(survey.survey_id)}
+                        disabled={isGeneratingPublicLink}
+                        onClick={() => copyPublicRespondLink(survey.survey_id)}
                       >
-                        <Copy size={15} />
-                        응답 링크
+                        {isGeneratingPublicLink ? (
+                          <LoadingSpinner compact label="링크 생성 중" />
+                        ) : (
+                          <>
+                            <Copy size={15} />
+                            공유 링크
+                          </>
+                        )}
                       </button>
                       <Link
                         to={`/survey/${survey.survey_id}/respond`}

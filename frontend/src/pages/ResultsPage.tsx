@@ -283,8 +283,8 @@ function QualityRow({
           </div>
           <p className="text-sm leading-6 text-slate-800">{item.question_text}</p>
         </div>
-        {(item.llm_comment || item.suggested_rewrite) && problem ? (
-          <DetailButton open={open} onClick={onToggle} label="수정 제안 보기" />
+        {item.llm_comment || item.suggested_rewrite ? (
+          <DetailButton open={open} onClick={onToggle} label="제안본 보기" />
         ) : null}
       </div>
 
@@ -298,7 +298,7 @@ function QualityRow({
           ) : null}
           {item.suggested_rewrite ? (
             <div>
-              <p className="font-black text-slate-900">수정 제안</p>
+              <p className="font-black text-slate-900">제안본</p>
               <p className="mt-1 rounded-md bg-teal-50 p-3 font-semibold text-teal-900">
                 {item.suggested_rewrite}
               </p>
@@ -310,19 +310,8 @@ function QualityRow({
   )
 }
 
-function ConstructRow({
-  item,
-  open,
-  onToggle,
-}: {
-  item: ConstructEvaluationItem
-  open: boolean
-  onToggle: () => void
-}) {
+function ConstructRow({ item }: { item: ConstructEvaluationItem }) {
   const status = item.status ?? 'unknown'
-  const features = item.llm_features ?? {}
-  const reason = typeof features.reason === 'string' ? features.reason : null
-  const suggestion = typeof features.suggestion === 'string' ? features.suggestion : null
 
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-4">
@@ -343,25 +332,7 @@ function ConstructRow({
           </div>
           <p className="text-sm leading-6 text-slate-800">{item.question_text}</p>
         </div>
-        {reason || suggestion ? <DetailButton open={open} onClick={onToggle} /> : null}
       </div>
-
-      {open ? (
-        <div className="mt-4 space-y-3 rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-700">
-          {reason ? (
-            <div>
-              <p className="font-black text-slate-900">판단 근거</p>
-              <p className="mt-1">{reason}</p>
-            </div>
-          ) : null}
-          {suggestion ? (
-            <div>
-              <p className="font-black text-slate-900">제안</p>
-              <p className="mt-1">{suggestion}</p>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
     </article>
   )
 }
@@ -506,7 +477,6 @@ export function ResultsPage() {
   const { pushToast } = useToastStore()
   const [responseDetailsOpen, setResponseDetailsOpen] = useState(false)
   const [openQualityItemId, setOpenQualityItemId] = useState<string | null>(null)
-  const [openConstructItemId, setOpenConstructItemId] = useState<string | null>(null)
 
   const responseResult =
     (location.state as { responseResult?: SurveyResponseSubmitResult } | null)?.responseResult ??
@@ -787,16 +757,7 @@ export function ResultsPage() {
         <div className="space-y-3">
           {constructResults.length > 0 ? (
             constructResults.map((item) => (
-              <ConstructRow
-                key={item.item_id}
-                item={item}
-                open={openConstructItemId === item.item_id}
-                onToggle={() =>
-                  setOpenConstructItemId((current) =>
-                    current === item.item_id ? null : item.item_id,
-                  )
-                }
-              />
+              <ConstructRow key={item.item_id} item={item} />
             ))
           ) : (
             <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">

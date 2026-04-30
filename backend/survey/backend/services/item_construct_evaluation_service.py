@@ -10,6 +10,24 @@ from services.item_construct_llm_service import (
 )
 
 
+def sanitize_construct_llm_features(llm_features):
+    if not isinstance(llm_features, dict):
+        return None
+
+    allowed_keys = [
+        "construct_fit",
+        "semantic_consistency",
+        "redundancy_risk",
+        "off_construct_risk",
+        "expected_citc_direction",
+    ]
+
+    return {
+        key: llm_features.get(key)
+        for key in allowed_keys
+    }
+
+
 def evaluate_construct_for_survey(db, survey_id: str, overwrite: bool = True):
     survey = db.query(models.Survey).filter_by(survey_id=survey_id).first()
 
@@ -58,6 +76,7 @@ def evaluate_construct_for_survey(db, survey_id: str, overwrite: bool = True):
                 survey=survey,
                 normal_items=normal_items
             )
+            llm_features = sanitize_construct_llm_features(llm_features)
             llm_score = calculate_llm_construct_score(llm_features)
         except Exception as e:
             item_errors.append(f"llm failed: {repr(e)}")
@@ -92,7 +111,7 @@ def evaluate_construct_for_survey(db, survey_id: str, overwrite: bool = True):
             "question_text": item.question_text,
             "embedding_features": embedding_result["embedding_features"],
             "embedding_score": embedding_result["embedding_score"],
-            "llm_features": llm_features,
+            "llm_features": sanitize_construct_llm_features(llm_features),
             "llm_score": llm_score,
             "predicted_citc": None,
             "errors": item_errors if item_errors else None

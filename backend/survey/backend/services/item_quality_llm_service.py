@@ -74,24 +74,41 @@ def evaluate_item_with_llm(question_text, options):
     quality_dictionary = build_quality_dictionary_payload()
 
     prompt = f"""
-You are a strict but conservative survey item wording evaluator.
+You are a conservative survey item wording evaluator.
 
 Task:
 1) Evaluate wording quality for the item.
 2) Use the term dictionary below as a diagnostic aid.
 3) Always judge term risk in context of both question and options.
 
-Important policy:
+Critical calibration:
+- Start from the assumption that the item is acceptable unless clear evidence says otherwise.
 - Do NOT penalize a term just because it appears.
-- If options provide concrete anchors (example: "once every 3 days", fixed frequency, explicit timeframe),
-  ambiguous adverbs like "often/frequently" may be acceptable and should receive little or no penalty.
-- Penalize only when context is actually unclear, biased, double-barreled, or hard to answer.
-- Score conservatively: avoid extreme 0-2 or 9-10 unless there is very strong evidence.
-- Typical well-written item should be around 6.0~8.5.
+- If options provide concrete anchors (example: fixed frequency or explicit timeframe),
+  words like "often/frequently" can be acceptable and should receive little or no penalty.
+- Only mark a problem when there is concrete wording evidence that many respondents may misinterpret.
+- If there is no clear problem:
+  problem_categories must be [],
+  detected_terms must be [],
+  suggested_rewrite must be "".
+- If there is a real problem:
+  suggested_rewrite must be a single proposed revised item sentence (draft version).
+  Do not prepend labels such as "수정 제안:", "제안:", "원문:", or explanations.
+- Keep problem_categories short (0~2 entries) and high-precision.
 
 Evaluation scope:
 - Only wording quality (clarity/single concept/answerability/neutrality).
 - Ignore construct-level consistency with other items.
+
+Language policy:
+- All natural-language outputs must be in Korean:
+  term_assessments.reason, llm_comment, suggested_rewrite.
+- Do not write English sentences in those fields.
+
+Scoring policy:
+- Avoid extreme scores unless there is very strong evidence.
+- Typical adequately-written operational items should usually land around 6.5~8.8.
+- Very low scores (<4) require explicit severe wording flaws.
 
 Input:
 Question:
@@ -117,11 +134,11 @@ Return ONLY JSON with this schema:
       "term": "matched term or variant",
       "category": "ambiguous|negative|leading|double_barreled",
       "context_effect": "problem|acceptable",
-      "reason": "one short reason"
+      "reason": "짧은 한국어 근거 1문장"
     }}
   ],
-  "llm_comment": "2-4 sentence conservative diagnostic summary",
-  "suggested_rewrite": "rewrite only when needed; otherwise empty string"
+  "llm_comment": "한국어 2~3문장 진단 요약",
+  "suggested_rewrite": "필요할 때만 한국어 제안본 문장 1개, 문제 없으면 빈 문자열"
 }}
 """
 
@@ -133,7 +150,8 @@ Return ONLY JSON with this schema:
                 "content": (
                     "Return ONLY valid JSON. "
                     "Be conservative and context-aware. "
-                    "Do not auto-penalize dictionary terms without contextual evidence."
+                    "Do not auto-penalize dictionary terms without contextual evidence. "
+                    "Use Korean for all free-text output fields."
                 ),
             },
             {"role": "user", "content": prompt},

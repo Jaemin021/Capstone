@@ -1,6 +1,7 @@
 # backend/routers/survey_evaluations.py
 
 from datetime import datetime
+import re
 from fastapi import APIRouter
 from database import SessionLocal
 import models
@@ -9,7 +10,10 @@ from services.survey_statistical_evaluation_service import (
     evaluate_survey_statistics,
     build_response_score_matrix,
 )
-from services.item_construct_evaluation_service import evaluate_construct_for_survey
+from services.item_construct_evaluation_service import (
+    evaluate_construct_for_survey,
+    sanitize_construct_llm_features,
+)
 
 from services.item_quality_llm_service import evaluate_item_with_llm
 from services.item_quality_score_service import calculate_quality_score
@@ -29,6 +33,32 @@ def score_status(score, good=8.0, warning=6.0):
     if score >= warning:
         return "warning"
     return "bad"
+
+
+def _has_text(value):
+    return isinstance(value, str) and value.strip() != ""
+
+
+def build_fallback_rewrite(question_text, problem_categories):
+    base_question = (question_text or "").strip()
+    if not base_question:
+        return ""
+
+    categories = set(problem_categories or [])
+    normalized = re.sub(r"\s+", " ", base_question)
+    normalized = re.sub(r"[.?!]+$", "", normalized).strip()
+
+    prefix = ""
+    if "ambiguous_time" in categories or "answerability_issue" in categories:
+        prefix = "지난 2주 동안, "
+    elif "double_barreled" in categories or "single_concept_issue" in categories:
+        prefix = "한 가지 행동 기준으로, "
+
+    proposal = f"{prefix}{normalized}".strip()
+    if not proposal.endswith("."):
+        proposal = proposal + "."
+
+    return proposal
 
 
 def _evaluate_quality_without_long_db_lock(survey_id: str):
@@ -86,6 +116,14 @@ def _evaluate_quality_without_long_db_lock(survey_id: str):
         llm_comment = llm_result.get("llm_comment") if isinstance(llm_result, dict) else None
         suggested_rewrite = llm_result.get("suggested_rewrite") if isinstance(llm_result, dict) else None
 
+        status = score_status(score)
+
+        if status in ["warning", "bad"] and not _has_text(suggested_rewrite):
+            suggested_rewrite = build_fallback_rewrite(
+                question_text=question_text,
+                problem_categories=problem_categories,
+            )
+
         eval_rows.append({
             "survey_id": survey_id,
             "item_id": item["item_id"],
@@ -102,7 +140,7 @@ def _evaluate_quality_without_long_db_lock(survey_id: str):
             "item_order": item["item_order"],
             "question_text": question_text,
             "quality_score": score,
-            "status": score_status(score),
+            "status": status,
             "problem_categories": problem_categories,
             "detected_terms": detected_terms,
             "llm_comment": llm_comment,
@@ -238,7 +276,7 @@ def get_construct_results(survey_id: str):
                 "question_text": item.question_text,
                 "embedding_features": eval_row.embedding_features,
                 "embedding_score": eval_row.embedding_score,
-                "llm_features": eval_row.llm_features,
+                "llm_features": sanitize_construct_llm_features(eval_row.llm_features),
                 "llm_score": eval_row.llm_score,
                 "combined_score": combined_score,
                 "status": score_status(combined_score),
