@@ -25,8 +25,8 @@ npm run build
 `.env.example`을 참고해 `.env`를 만들 수 있습니다.
 
 ```bash
-VITE_API_BASE_URL=http://localhost:8080
-VITE_USE_MOCK_API=true
+VITE_API_BASE_URL=http://3.34.198.33:8000
+VITE_USE_MOCK_API=false
 ```
 
 백엔드가 준비되기 전에는 `VITE_USE_MOCK_API=true`로 두면 mock 데이터로 전체 화면 흐름을 확인할 수 있습니다.
