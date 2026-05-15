@@ -34,13 +34,7 @@ const normalizeOptions = (options?: string[]) => {
 const initialItems: SurveyItem[] = [
   {
     id: createId(),
-    text: '이 서비스는 필요한 기능을 쉽게 찾을 수 있게 구성되어 있다.',
-    type: 'likert-5',
-    options: [...defaultOptions],
-  },
-  {
-    id: createId(),
-    text: '서비스 이용 과정에서 제공되는 설명은 이해하기 쉽다.',
+    text: '',
     type: 'likert-5',
     options: [...defaultOptions],
   },
@@ -96,10 +90,7 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
   items: seededItems,
   selectedItemId: seededItems[0]?.id ?? null,
   draftResetAt: 0,
-  settings: {
-    title: '응답 신뢰도 분석 설문',
-    surveyContext: '디지털 서비스 사용성 만족도 조사',
-  },
+  settings: { ...initialSettings },
   resetDraft: () =>
     set(() => {
       const items = createInitialItems()

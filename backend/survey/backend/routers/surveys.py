@@ -1,6 +1,7 @@
 # backend/routers/surveys.py
 
 import uuid
+from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from database import SessionLocal
 import models
@@ -25,9 +26,19 @@ def generate_access_key():
     return uuid.uuid4().hex
 
 
+def now_iso():
+    return datetime.now().isoformat()
+
+
 def get_survey_by_access_key(db, access_key: str):
     return db.query(models.Survey).filter_by(
         external_survey_key=access_key
+    ).first()
+
+
+def get_public_invite_by_key(db, invite_key: str):
+    return db.query(models.PublicSurveyInvite).filter_by(
+        invite_key=invite_key
     ).first()
 
 
@@ -913,6 +924,28 @@ def create_or_get_public_link(survey_id: str, payload: schemas.SurveyShareLinkCr
         if survey is None:
             raise HTTPException(status_code=404, detail="survey not found")
 
+        if payload.single_use:
+            invite_key = generate_access_key()
+            invite = models.PublicSurveyInvite(
+                survey_id=survey.survey_id,
+                invite_key=invite_key,
+                is_consumed=False,
+                created_at=now_iso(),
+                consumed_at=None,
+                consumed_response_id=None,
+            )
+            db.add(invite)
+            db.commit()
+
+            return {
+                "survey_id": survey.survey_id,
+                "access_key": invite_key,
+                "public_path": f"/public/o/{invite_key}",
+                "created": True,
+                "single_use": True,
+                "message": "one-time public link created"
+            }
+
         if payload.rotate or not survey.external_survey_key:
             survey.external_survey_key = generate_access_key()
             db.commit()
@@ -926,6 +959,7 @@ def create_or_get_public_link(survey_id: str, payload: schemas.SurveyShareLinkCr
             "access_key": survey.external_survey_key,
             "public_path": f"/public/s/{survey.external_survey_key}",
             "created": created,
+            "single_use": False,
             "message": "public link ready"
         }
 
@@ -1011,6 +1045,98 @@ def create_public_response(access_key: str, response: schemas.PublicResponseCrea
 
         response.respondent_id = respondent_id
         return create_response_and_features(db, survey.survey_id, response)
+
+    finally:
+        db.close()
+
+
+@router.get("/public-once/{invite_key}")
+def get_public_survey_from_one_time_link(invite_key: str):
+    db = SessionLocal()
+
+    try:
+        invite = get_public_invite_by_key(db, invite_key)
+        if invite is None:
+            raise HTTPException(status_code=404, detail="one-time public link not found")
+
+        survey = db.query(models.Survey).filter_by(survey_id=invite.survey_id).first()
+        if survey is None:
+            raise HTTPException(status_code=404, detail="survey not found")
+
+        return build_survey_response(db, survey)
+
+    finally:
+        db.close()
+
+
+@router.get("/public-once/{invite_key}/availability")
+def get_public_survey_availability_from_one_time_link(invite_key: str):
+    db = SessionLocal()
+
+    try:
+        invite = get_public_invite_by_key(db, invite_key)
+        if invite is None:
+            raise HTTPException(status_code=404, detail="one-time public link not found")
+
+        if invite.is_consumed:
+            return {
+                "survey_id": invite.survey_id,
+                "available": False,
+                "reason": "link_used",
+                "message": "This one-time link has already been used."
+            }
+
+        return {
+            "survey_id": invite.survey_id,
+            "available": True,
+            "reason": None,
+            "message": "Survey is available."
+        }
+
+    finally:
+        db.close()
+
+
+@router.post("/public-once/{invite_key}/responses")
+def create_public_response_from_one_time_link(invite_key: str, response: schemas.ResponseCreate):
+    db = SessionLocal()
+
+    try:
+        invite = get_public_invite_by_key(db, invite_key)
+        if invite is None:
+            raise HTTPException(status_code=404, detail="one-time public link not found")
+
+        if invite.is_consumed:
+            raise HTTPException(
+                status_code=409,
+                detail="one-time link already used"
+            )
+
+        respondent_id = f"invite:{invite.invite_id}"
+        existing = db.query(models.Response.response_id).filter_by(
+            survey_id=invite.survey_id,
+            respondent_id=respondent_id,
+            is_completed=True
+        ).first()
+        if existing is not None:
+            invite.is_consumed = True
+            invite.consumed_response_id = existing[0]
+            invite.consumed_at = invite.consumed_at or now_iso()
+            db.commit()
+            raise HTTPException(
+                status_code=409,
+                detail="one-time link already used"
+            )
+
+        response.respondent_id = respondent_id
+        result = create_response_and_features(db, invite.survey_id, response)
+
+        invite.is_consumed = True
+        invite.consumed_response_id = result.get("response_id")
+        invite.consumed_at = now_iso()
+        db.commit()
+
+        return result
 
     finally:
         db.close()
@@ -1150,6 +1276,7 @@ def delete_survey(survey_id: str):
         db.query(models.ConstructEvaluation).filter_by(survey_id=survey_id).delete(synchronize_session=False)
         db.query(models.SurveyStatisticalEvaluation).filter_by(survey_id=survey_id).delete(synchronize_session=False)
         db.query(models.SurveyLogStatistics).filter_by(survey_id=survey_id).delete(synchronize_session=False)
+        db.query(models.PublicSurveyInvite).filter_by(survey_id=survey_id).delete(synchronize_session=False)
 
         if item_ids:
             db.query(models.SurveyItemOption).filter(

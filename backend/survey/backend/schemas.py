@@ -119,6 +119,7 @@ class ResponseCreate(BaseModel):
 
 class SurveyShareLinkCreate(BaseModel):
     rotate: bool = False
+    single_use: bool = False
 
 
 class PublicResponseCreate(ResponseCreate):

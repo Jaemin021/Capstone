@@ -185,6 +185,7 @@ export interface PublicSurveyLinkResponse {
   access_key: string
   public_path: string
   created: boolean
+  single_use?: boolean
   message?: string
 }
 
@@ -315,12 +316,22 @@ export interface QualityEvaluationItem {
   detected_terms?: string[] | null
   llm_comment?: string | null
   suggested_rewrite?: string | null
+  llm_error?: string | null
   created_at?: string | null
+}
+
+export interface QualityEvaluationDebugError {
+  item_id: string
+  item_order: number
+  error: string
 }
 
 export interface QualityEvaluationResponse {
   survey_id: string
   results: QualityEvaluationItem[]
+  debug?: {
+    errors?: QualityEvaluationDebugError[] | null
+  } | null
 }
 
 export interface ConstructEvaluationItem {

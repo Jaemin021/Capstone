@@ -33,6 +33,18 @@ class Survey(Base):
     items = relationship("SurveyItem", back_populates="survey")
 
 
+class PublicSurveyInvite(Base):
+    __tablename__ = "public_survey_invites"
+
+    invite_id = Column(String, primary_key=True, default=generate_uuid)
+    survey_id = Column(String, ForeignKey("surveys.survey_id"), nullable=False)
+    invite_key = Column(String, nullable=False, unique=True, index=True)
+    is_consumed = Column(Boolean, default=False)
+    created_at = Column(String, nullable=True)
+    consumed_at = Column(String, nullable=True)
+    consumed_response_id = Column(String, nullable=True)
+
+
 class SurveyItem(Base):
     __tablename__ = "survey_items"
 

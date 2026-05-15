@@ -18,7 +18,7 @@ export function AppShell({ children }: AppShellProps) {
   const location = useLocation()
   const resetDraft = useSurveyStore((state) => state.resetDraft)
   const isRespondPage = /^\/survey\/[^/]+\/respond\/?$/.test(location.pathname)
-  const isPublicSurveyPage = /^\/public\/s\/[^/]+(\/complete)?\/?$/.test(location.pathname)
+  const isPublicSurveyPage = /^\/public\/(s|o)\/[^/]+(\/complete)?\/?$/.test(location.pathname)
 
   if (isRespondPage || isPublicSurveyPage) {
     return (

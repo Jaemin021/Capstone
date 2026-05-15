@@ -217,8 +217,23 @@ export async function getSurvey(surveyId: string): Promise<BackendSurveyResponse
 export async function createPublicSurveyLink(
   surveyId: string,
   rotate = false,
+  singleUse = false,
 ): Promise<PublicSurveyLinkResponse> {
   if (useMockApi) {
+    if (singleUse) {
+      const inviteKey = `mock-once-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+      window.localStorage.setItem(`mock-public-once-link:${inviteKey}`, surveyId)
+
+      return {
+        survey_id: surveyId,
+        access_key: inviteKey,
+        public_path: `/public/o/${inviteKey}`,
+        created: true,
+        single_use: true,
+        message: 'mock one-time public link created',
+      }
+    }
+
     const keyStorage = `mock-public-link:${surveyId}`
     const existing = window.localStorage.getItem(keyStorage)
     const accessKey =
@@ -233,12 +248,14 @@ export async function createPublicSurveyLink(
       access_key: accessKey,
       public_path: `/public/s/${accessKey}`,
       created: !existing || rotate,
+      single_use: false,
       message: 'mock public link ready',
     }
   }
 
   const { data } = await http.post<PublicSurveyLinkResponse>(`/surveys/${surveyId}/public-link`, {
     rotate,
+    single_use: singleUse,
   })
   return data
 }
@@ -266,6 +283,19 @@ export async function getPublicSurvey(accessKey: string): Promise<BackendSurveyR
   return data
 }
 
+export async function getOneTimePublicSurvey(inviteKey: string): Promise<BackendSurveyResponse> {
+  if (useMockApi) {
+    const surveyId = window.localStorage.getItem(`mock-public-once-link:${inviteKey}`)
+    if (!surveyId) {
+      throw new Error('Mock one-time public survey not found')
+    }
+    return getSurvey(surveyId)
+  }
+
+  const { data } = await http.get<BackendSurveyResponse>(`/surveys/public-once/${inviteKey}`)
+  return data
+}
+
 export async function getPublicSurveyAvailability(
   accessKey: string,
   deviceId: string,
@@ -290,6 +320,30 @@ export async function getPublicSurveyAvailability(
         device_id: deviceId,
       },
     },
+  )
+  return data
+}
+
+export async function getOneTimePublicSurveyAvailability(
+  inviteKey: string,
+): Promise<PublicSurveyAvailabilityResponse> {
+  if (useMockApi) {
+    const surveyId = window.localStorage.getItem(`mock-public-once-link:${inviteKey}`)
+    if (!surveyId) {
+      throw new Error('Mock one-time public survey not found')
+    }
+    const used = window.localStorage.getItem(`mock-public-once-used:${inviteKey}`) === '1'
+
+    return {
+      survey_id: surveyId,
+      available: !used,
+      reason: used ? 'link_used' : null,
+      message: used ? 'This one-time link has already been used.' : 'Survey is available.',
+    }
+  }
+
+  const { data } = await http.get<PublicSurveyAvailabilityResponse>(
+    `/surveys/public-once/${inviteKey}/availability`,
   )
   return data
 }
@@ -425,6 +479,34 @@ export async function submitPublicSurveyResponse(
       ...payload,
       device_id: deviceId,
     },
+  )
+  return data
+}
+
+export async function submitOneTimePublicSurveyResponse(
+  inviteKey: string,
+  payload: SurveyResponseSubmitPayload,
+): Promise<SurveyResponseSubmitResult> {
+  if (useMockApi) {
+    const surveyId = window.localStorage.getItem(`mock-public-once-link:${inviteKey}`)
+    if (!surveyId) {
+      throw new Error('Mock one-time public survey not found')
+    }
+
+    const usedMarker = `mock-public-once-used:${inviteKey}`
+    const alreadyUsed = window.localStorage.getItem(usedMarker) === '1'
+    if (alreadyUsed) {
+      throw new Error('one-time link already used')
+    }
+
+    const result = await submitSurveyResponse(surveyId, payload)
+    window.localStorage.setItem(usedMarker, '1')
+    return result
+  }
+
+  const { data } = await http.post<SurveyResponseSubmitResult>(
+    `/surveys/public-once/${inviteKey}/responses`,
+    payload,
   )
   return data
 }

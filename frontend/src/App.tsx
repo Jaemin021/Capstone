@@ -18,6 +18,8 @@ function App() {
         <Route path="/survey/:id/respond" element={<SurveyRespondPage />} />
         <Route path="/public/s/:accessKey" element={<SurveyRespondPage />} />
         <Route path="/public/s/:accessKey/complete" element={<PublicSurveyCompletePage />} />
+        <Route path="/public/o/:inviteKey" element={<SurveyRespondPage />} />
+        <Route path="/public/o/:inviteKey/complete" element={<PublicSurveyCompletePage />} />
         <Route path="/survey/:id/results" element={<ResultsPage />} />
         <Route path="/guide" element={<GuidePage />} />
         <Route path="*" element={<Navigate to="/survey/create" replace />} />

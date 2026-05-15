@@ -93,6 +93,26 @@ function compactError(error: unknown) {
   }
 }
 
+function summarizeQualityLlmFailures(items: QualityEvaluationItem[]) {
+  const failedItems = items.filter((item) => item.quality_score == null && item.llm_error)
+
+  if (failedItems.length === 0) {
+    return null
+  }
+
+  const firstError = failedItems[0]?.llm_error ?? ''
+
+  if (firstError.includes('insufficient_quota')) {
+    return `OpenAI 할당량 부족으로 ${failedItems.length}개 문항의 LLM 평가가 실패했습니다.`
+  }
+
+  if (firstError.includes('OPENAI_API_KEY is not configured')) {
+    return `OPENAI_API_KEY 미설정으로 ${failedItems.length}개 문항의 LLM 평가가 실패했습니다.`
+  }
+
+  return `${failedItems.length}개 문항의 LLM 평가가 실패했습니다. 백엔드 설정/로그를 확인해 주세요.`
+}
+
 function statusLabel(status?: EvaluationStatus) {
   if (status === 'good') {
     return '신뢰도 높음'
@@ -256,7 +276,8 @@ function QualityRow({
     )
   }
 
-  const problem = item.status === 'warning' || item.status === 'bad'
+  const hasLlmError = Boolean(item.llm_error?.trim())
+  const problem = item.status === 'warning' || item.status === 'bad' || hasLlmError
 
   return (
     <article
@@ -283,13 +304,19 @@ function QualityRow({
           </div>
           <p className="text-sm leading-6 text-slate-800">{item.question_text}</p>
         </div>
-        {item.llm_comment || item.suggested_rewrite ? (
+        {item.llm_comment || item.suggested_rewrite || hasLlmError ? (
           <DetailButton open={open} onClick={onToggle} label="제안본 보기" />
         ) : null}
       </div>
 
       {open ? (
         <div className="mt-4 space-y-3 rounded-lg border border-white bg-white p-4 text-sm leading-6 text-slate-700">
+          {hasLlmError ? (
+            <div className="rounded-md bg-rose-50 p-3 text-rose-900">
+              <p className="font-black">LLM 평가 오류</p>
+              <p className="mt-1 break-all text-xs leading-5">{item.llm_error}</p>
+            </div>
+          ) : null}
           {item.llm_comment ? (
             <div>
               <p className="font-black text-slate-900">LLM 코멘트</p>
@@ -521,6 +548,17 @@ export function ResultsPage() {
     onSuccess: (data) => {
       console.log('[results] quality mutation response', data)
       queryClient.invalidateQueries({ queryKey: ['survey-quality', id] })
+      const llmFailureMessage = summarizeQualityLlmFailures(data.results)
+
+      if (llmFailureMessage) {
+        pushToast({
+          type: 'error',
+          title: '문항 품질 평가 실패',
+          description: llmFailureMessage,
+        })
+        return
+      }
+
       pushToast({ type: 'success', title: '문항 품질 평가 완료' })
     },
     onError: (error) => {
@@ -600,6 +638,7 @@ export function ResultsPage() {
           detected_terms: null,
           llm_comment: null,
           suggested_rewrite: null,
+          llm_error: null,
           created_at: null,
           item_role: surveyItem.item_role,
         }
@@ -608,8 +647,7 @@ export function ResultsPage() {
   )
 
   const evaluationTargetItems = qualityDisplayItems.filter((item) => item.item_role === 'normal')
-  const evaluatedQualityCount = evaluationTargetItems.filter((item) => qualityResultMap.has(item.item_id))
-    .length
+  const evaluatedQualityCount = evaluationTargetItems.filter((item) => item.quality_score != null).length
   const problemQualityCount = evaluationTargetItems.filter(
     (item) => item.status === 'warning' || item.status === 'bad',
   ).length

@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Smartphone } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   getPublicSurvey,
   getPublicSurveyAvailability,
+  getOneTimePublicSurvey,
+  getOneTimePublicSurveyAvailability,
   getSurvey,
   saveResponseResultToStorage,
+  submitOneTimePublicSurveyResponse,
   submitPublicSurveyResponse,
   submitSurveyResponse,
 } from '../api/surveyApi'
@@ -44,6 +47,21 @@ interface ResponseSession {
 const nowIso = () => new Date().toISOString()
 const nowMs = () => Date.now()
 const publicDeviceStorageKey = 'survey-public-device-id'
+
+function isLikelyMobileClient() {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+    return true
+  }
+
+  const userAgent = navigator.userAgent || ''
+  const mobileUaPattern =
+    /Android|iPhone|iPad|iPod|Mobile|Windows Phone|webOS|BlackBerry|Opera Mini|IEMobile/i
+  const hasMobileUa = mobileUaPattern.test(userAgent)
+  const hasCoarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false
+  const hasNarrowViewport = window.matchMedia?.('(max-width: 1024px)').matches ?? false
+
+  return hasMobileUa || (hasCoarsePointer && hasNarrowViewport)
+}
 
 function getOrCreatePublicDeviceId() {
   if (typeof window === 'undefined') {
@@ -157,30 +175,70 @@ function getRoleBadge(item: BackendSurveyItem) {
 }
 
 export function SurveyRespondPage() {
-  const { id = '', accessKey = '' } = useParams()
-  const isPublicMode = Boolean(accessKey)
-  const surveyIdentifier = isPublicMode ? accessKey : id
+  const { id = '', accessKey = '', inviteKey = '' } = useParams()
+  const isOneTimeMode = Boolean(inviteKey)
+  const isPublicMode = Boolean(accessKey) || isOneTimeMode
+  const isDevicePublicMode = Boolean(accessKey) && !isOneTimeMode
+  const surveyIdentifier = isPublicMode ? (isOneTimeMode ? inviteKey : accessKey) : id
   const navigate = useNavigate()
   const { pushToast } = useToastStore()
   const sessionRef = useRef<ResponseSession | null>(null)
   const initializedRef = useRef(false)
   const [session, setSession] = useState<ResponseSession | null>(null)
   const [currentIndex, setCurrentIndex] = useState(0)
+  const [isMobileClient, setIsMobileClient] = useState(true)
   const publicDeviceId = useMemo(
-    () => (isPublicMode ? getOrCreatePublicDeviceId() : ''),
-    [isPublicMode],
+    () => (isDevicePublicMode ? getOrCreatePublicDeviceId() : ''),
+    [isDevicePublicMode],
   )
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const updateMobileState = () => {
+      setIsMobileClient(isLikelyMobileClient())
+    }
+
+    updateMobileState()
+    window.addEventListener('resize', updateMobileState)
+
+    return () => {
+      window.removeEventListener('resize', updateMobileState)
+    }
+  }, [])
 
   const surveyQuery = useQuery({
     queryKey: ['survey', isPublicMode ? 'public' : 'private', surveyIdentifier],
-    queryFn: () => (isPublicMode ? getPublicSurvey(accessKey) : getSurvey(id)),
-    enabled: Boolean(surveyIdentifier),
+    queryFn: () => {
+      if (isOneTimeMode) {
+        return getOneTimePublicSurvey(inviteKey)
+      }
+      if (isPublicMode) {
+        return getPublicSurvey(accessKey)
+      }
+      return getSurvey(id)
+    },
+    enabled: Boolean(surveyIdentifier) && isMobileClient,
   })
 
   const publicAvailabilityQuery = useQuery({
-    queryKey: ['public-availability', accessKey, publicDeviceId],
-    queryFn: () => getPublicSurveyAvailability(accessKey, publicDeviceId),
-    enabled: isPublicMode && surveyQuery.isSuccess && Boolean(accessKey) && Boolean(publicDeviceId),
+    queryKey: [
+      'public-availability',
+      isOneTimeMode ? 'one-time' : 'shared',
+      surveyIdentifier,
+      publicDeviceId,
+    ],
+    queryFn: () =>
+      isOneTimeMode
+        ? getOneTimePublicSurveyAvailability(inviteKey)
+        : getPublicSurveyAvailability(accessKey, publicDeviceId),
+    enabled:
+      isMobileClient &&
+      isPublicMode &&
+      surveyQuery.isSuccess &&
+      (isOneTimeMode ? Boolean(inviteKey) : Boolean(accessKey) && Boolean(publicDeviceId)),
     retry: false,
   })
 
@@ -189,6 +247,7 @@ export function SurveyRespondPage() {
   const currentItem = items[currentIndex]
   const progress = items.length > 0 ? ((currentIndex + 1) / items.length) * 100 : 0
   const isPublicBlocked = isPublicMode && publicAvailabilityQuery.data?.available === false
+  const isOneTimeLinkUsed = publicAvailabilityQuery.data?.reason === 'link_used'
 
   useEffect(() => {
     initializedRef.current = false
@@ -283,9 +342,11 @@ export function SurveyRespondPage() {
 
   const submitMutation = useMutation({
     mutationFn: (payload: SurveyResponseSubmitPayload) =>
-      isPublicMode
-        ? submitPublicSurveyResponse(accessKey, publicDeviceId, payload)
-        : submitSurveyResponse(id, payload),
+      isOneTimeMode
+        ? submitOneTimePublicSurveyResponse(inviteKey, payload)
+        : isPublicMode
+          ? submitPublicSurveyResponse(accessKey, publicDeviceId, payload)
+          : submitSurveyResponse(id, payload),
     onSuccess: (result) => {
       if (isPublicMode) {
         pushToast({
@@ -293,7 +354,10 @@ export function SurveyRespondPage() {
           title: '설문 제출 완료',
           description: '응답이 정상적으로 저장되었습니다.',
         })
-        navigate(`/public/s/${accessKey}/complete`, { replace: true })
+        navigate(
+          isOneTimeMode ? `/public/o/${inviteKey}/complete` : `/public/s/${accessKey}/complete`,
+          { replace: true },
+        )
         return
       }
 
@@ -310,8 +374,10 @@ export function SurveyRespondPage() {
       if (status === 409) {
         pushToast({
           type: 'error',
-          title: '이미 응답한 기기입니다',
-          description: '같은 기기에서는 한 번만 응답할 수 있습니다.',
+          title: isOneTimeMode ? '이미 사용된 링크입니다' : '이미 응답한 기기입니다',
+          description: isOneTimeMode
+            ? '이 일회용 링크는 이미 제출되어 재사용할 수 없습니다.'
+            : '같은 기기에서는 한 번만 응답할 수 있습니다.',
         })
         return
       }
@@ -333,7 +399,11 @@ export function SurveyRespondPage() {
     const startedAtMs = nowMs()
     const firstItem = items[0]
     const initialSession: ResponseSession = {
-      respondentId: isPublicMode ? `device:${publicDeviceId}` : `user-${startedAtMs}`,
+      respondentId: isOneTimeMode
+        ? `invite:${inviteKey}`
+        : isPublicMode
+          ? `device:${publicDeviceId}`
+          : `user-${startedAtMs}`,
       startedAt,
       startedAtMs,
       totalTouchCount: 0,
@@ -350,7 +420,7 @@ export function SurveyRespondPage() {
 
     sessionRef.current = initialSession
     setSession(initialSession)
-  }, [items, survey, isPublicBlocked, isPublicMode, publicDeviceId])
+  }, [items, survey, isPublicBlocked, isPublicMode, isOneTimeMode, publicDeviceId, inviteKey])
 
   useEffect(() => {
     const handleOffline = () => {
@@ -501,7 +571,7 @@ export function SurveyRespondPage() {
   }
 
   const handleSubmit = () => {
-    if (isPublicMode && !publicDeviceId) {
+    if (isDevicePublicMode && !publicDeviceId) {
       pushToast({
         type: 'error',
         title: '기기 식별 정보를 확인하지 못했습니다',
@@ -513,8 +583,10 @@ export function SurveyRespondPage() {
     if (isPublicBlocked) {
       pushToast({
         type: 'error',
-        title: '이미 응답한 기기입니다',
-        description: '같은 기기에서는 한 번만 응답할 수 있습니다.',
+        title: isOneTimeLinkUsed ? '이미 사용된 링크입니다' : '이미 응답한 기기입니다',
+        description: isOneTimeLinkUsed
+          ? '이 일회용 링크는 이미 제출되어 재사용할 수 없습니다.'
+          : '같은 기기에서는 한 번만 응답할 수 있습니다.',
       })
       return
     }
@@ -591,6 +663,22 @@ export function SurveyRespondPage() {
     submitMutation.mutate(payload)
   }
 
+  if (!isMobileClient) {
+    return (
+      <section className="rounded-lg border border-amber-200 bg-white p-6 shadow-sm">
+        <div className="flex items-start gap-3">
+          <Smartphone className="mt-1 text-amber-700" size={20} />
+          <div>
+            <h1 className="text-lg font-black text-slate-950">모바일 전용 설문입니다</h1>
+            <p className="mt-1 text-sm text-slate-600">
+              이 설문은 모바일 기기에서만 응답할 수 있습니다. 휴대폰으로 접속해 주세요.
+            </p>
+          </div>
+        </div>
+      </section>
+    )
+  }
+
   if (surveyQuery.isLoading) {
     return (
       <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
@@ -631,7 +719,9 @@ export function SurveyRespondPage() {
           <div>
             <h1 className="text-lg font-black text-slate-950">이미 제출된 설문입니다</h1>
             <p className="mt-1 text-sm text-slate-600">
-              이 링크는 한 기기에서 한 번만 응답할 수 있습니다. 같은 기기에서는 재응답이 제한됩니다.
+              {isOneTimeLinkUsed
+                ? '이 일회용 링크는 이미 제출되어 더 이상 사용할 수 없습니다.'
+                : '이 링크는 한 기기에서 한 번만 응답할 수 있습니다. 같은 기기에서는 재응답이 제한됩니다.'}
             </p>
           </div>
         </div>
