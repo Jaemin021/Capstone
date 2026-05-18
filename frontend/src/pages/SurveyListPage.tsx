@@ -81,6 +81,10 @@ export function SurveyListPage() {
 
     try {
       const link = await createPublicSurveyLink(surveyId, false)
+      const isMockPublicLink =
+        link.access_key.startsWith('mock-') ||
+        link.public_path.includes('/public/s/mock-') ||
+        link.public_path.includes('/public/o/mock-')
       const url = resolvePublicRespondUrl(publicOrigin, link.public_path)
 
       try {
@@ -95,6 +99,15 @@ export function SurveyListPage() {
           type: 'info',
           title: '공유 링크',
           description: url,
+        })
+      }
+
+      if (isMockPublicLink) {
+        pushToast({
+          type: 'error',
+          title: 'Mock 링크가 생성되었습니다',
+          description:
+            '배포 환경에서 VITE_USE_MOCK_API=false 설정이 필요합니다. 현재 링크는 다른 기기에서 동작하지 않을 수 있습니다.',
         })
       }
     } catch (error) {

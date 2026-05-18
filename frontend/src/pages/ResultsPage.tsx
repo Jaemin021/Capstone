@@ -54,6 +54,17 @@ function getErrorMessage(error: unknown, fallback: string) {
   const data = response?.data
 
   if (typeof data === 'string') {
+    const trimmed = data.trim()
+    const looksLikeHtml =
+      trimmed.startsWith('<!doctype html') ||
+      trimmed.startsWith('<html') ||
+      trimmed.includes('<head>') ||
+      trimmed.includes('<body>')
+
+    if (looksLikeHtml) {
+      return 'API 대신 프론트 HTML이 응답되었습니다. VITE_API_BASE_URL 또는 프록시/라우팅 설정을 확인해 주세요.'
+    }
+
     return data
   }
 

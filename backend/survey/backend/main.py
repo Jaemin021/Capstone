@@ -1,6 +1,7 @@
 # backend/main.py
 
 import os
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,3 +44,13 @@ models.Base.metadata.create_all(bind=engine)
 
 app.include_router(surveys.router)
 app.include_router(survey_evaluations.router)
+
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok",
+        "time": datetime.now(timezone.utc).isoformat(),
+        "openai_api_key_configured": bool(os.getenv("OPENAI_API_KEY")),
+        "allowed_origins": get_allowed_origins(),
+    }
