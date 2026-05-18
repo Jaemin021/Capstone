@@ -74,27 +74,35 @@ def evaluate_item_with_llm(question_text, options):
     quality_dictionary = build_quality_dictionary_payload()
 
     prompt = f"""
-You are a conservative survey item wording evaluator.
+You are a conservative survey item wording evaluator focused on measurement quality.
+
+Primary objective:
+- Flag only wording issues that can materially degrade survey quality
+  (misinterpretation, response bias, non-answerability, double meaning).
+- Do NOT suggest edits for minor style preferences that do not harm measurement.
 
 Task:
 1) Evaluate wording quality for the item.
-2) Use the term dictionary below as a diagnostic aid.
-3) Always judge term risk in context of both question and options.
+2) Use the term dictionary below as a diagnostic aid, not as an automatic penalty list.
+3) Judge risks in the full context of question + options.
 
 Critical calibration:
-- Start from the assumption that the item is acceptable unless clear evidence says otherwise.
-- Do NOT penalize a term just because it appears.
-- If options provide concrete anchors (example: fixed frequency or explicit timeframe),
-  words like "often/frequently" can be acceptable and should receive little or no penalty.
-- Only mark a problem when there is concrete wording evidence that many respondents may misinterpret.
-- If there is no clear problem:
+- Start from "acceptable by default" unless clear evidence shows quality harm.
+- A flagged term is not a problem by itself.
+- If options anchor meaning (e.g., concrete frequency/timeframe), ambiguity penalty should be small or none.
+- Mark a problem only when there is concrete risk of distorted responses.
+- Keep problem_categories high precision (0~2 entries).
+
+Rewrite policy:
+- suggested_rewrite should appear only when there is a meaningful quality-harming issue.
+- If no meaningful issue:
   problem_categories must be [],
   detected_terms must be [],
   suggested_rewrite must be "".
-- If there is a real problem:
-  suggested_rewrite must be a single proposed revised item sentence (draft version).
-  Do not prepend labels such as "수정 제안:", "제안:", "원문:", or explanations.
-- Keep problem_categories short (0~2 entries) and high-precision.
+- If rewrite is needed:
+  suggested_rewrite must be exactly one Korean sentence that directly fixes the main quality risk.
+  Preserve original construct intent and response format.
+  Do not prepend labels such as "수정 제안:", "제안:", "원문:", and do not add explanations.
 
 Evaluation scope:
 - Only wording quality (clarity/single concept/answerability/neutrality).
@@ -106,9 +114,12 @@ Language policy:
 - Do not write English sentences in those fields.
 
 Scoring policy:
-- Avoid extreme scores unless there is very strong evidence.
-- Typical adequately-written operational items should usually land around 6.5~8.8.
-- Very low scores (<4) require explicit severe wording flaws.
+- 9~10: excellent wording, no practical risk.
+- 7~8: generally good, only minor concerns.
+- 6: borderline; monitor but not clearly harmful.
+- <6: clear quality-harming wording issues that need revision.
+- Very low scores (<4) require explicit severe flaws.
+- For scores <6, llm_comment must state the concrete harm mechanism.
 
 Input:
 Question:
@@ -150,6 +161,7 @@ Return ONLY JSON with this schema:
                 "content": (
                     "Return ONLY valid JSON. "
                     "Be conservative and context-aware. "
+                    "Prioritize measurement-quality harms over stylistic preferences. "
                     "Do not auto-penalize dictionary terms without contextual evidence. "
                     "Use Korean for all free-text output fields."
                 ),

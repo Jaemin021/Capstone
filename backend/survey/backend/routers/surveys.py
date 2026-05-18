@@ -1,8 +1,12 @@
 # backend/routers/surveys.py
 
+import csv
+import io
+import json
 import uuid
 from datetime import datetime
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
 from database import SessionLocal
 import models
 import schemas
@@ -28,6 +32,19 @@ def generate_access_key():
 
 def now_iso():
     return datetime.now().isoformat()
+
+
+def _safe_float_or_empty(value):
+    try:
+        if value is None:
+            return ""
+        return float(value)
+    except Exception:
+        return ""
+
+
+def _json_text(value):
+    return json.dumps(value, ensure_ascii=False) if value is not None else ""
 
 
 def get_survey_by_access_key(db, access_key: str):
@@ -1245,6 +1262,108 @@ def get_survey_reliability_distribution(survey_id: str):
             ],
             "respondents": respondents
         }
+
+    finally:
+        db.close()
+
+
+@router.get("/{survey_id}/response-features.csv")
+def download_survey_response_features_csv(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        survey = db.query(models.Survey).filter_by(survey_id=survey_id).first()
+        if survey is None:
+            raise HTTPException(status_code=404, detail="survey not found")
+
+        rows = db.query(
+            models.Response,
+            models.ResponseFeature,
+        ).join(
+            models.ResponseFeature,
+            models.Response.response_id == models.ResponseFeature.response_id,
+        ).filter(
+            models.Response.survey_id == survey_id,
+            models.Response.is_completed == True,
+        ).order_by(
+            models.Response.submitted_at.asc(),
+        ).all()
+
+        compact_keys = set()
+        for _, feature in rows:
+            compact = feature.compact_features or {}
+            compact_keys.update(compact.keys())
+
+        ordered_compact_keys = sorted(compact_keys)
+
+        header = [
+            "response_id",
+            "respondent_id",
+            "started_at",
+            "submitted_at",
+            "is_completed",
+            "reliability_score",
+            "reliability_status",
+        ] + ordered_compact_keys + [
+            "log_features_json",
+            "content_features_json",
+            "relation_features_json",
+            "population_features_json",
+        ]
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(header)
+
+        for response, feature in rows:
+            compact = feature.compact_features or {}
+            reliability = calculate_reliability_summary(compact)
+
+            compact_score = compact.get("reliability_score")
+            compact_status = compact.get("reliability_status")
+            reliability_score = (
+                _safe_float_or_empty(compact_score)
+                if compact_score is not None
+                else reliability.get("score", "")
+            )
+            reliability_status = compact_status or reliability.get("status", "")
+
+            row = [
+                response.response_id,
+                response.respondent_id or "",
+                response.started_at or "",
+                response.submitted_at or "",
+                bool(response.is_completed),
+                reliability_score,
+                reliability_status,
+            ]
+
+            for key in ordered_compact_keys:
+                value = compact.get(key)
+                if isinstance(value, (dict, list)):
+                    row.append(_json_text(value))
+                else:
+                    row.append(value if value is not None else "")
+
+            row.extend([
+                _json_text(feature.log_features),
+                _json_text(feature.content_features),
+                _json_text(feature.relation_features),
+                _json_text(feature.population_features),
+            ])
+
+            writer.writerow(row)
+
+        csv_text = "\ufeff" + buffer.getvalue()
+        filename = f"survey-{survey_id}-response-features.csv"
+
+        return PlainTextResponse(
+            content=csv_text,
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            },
+        )
 
     finally:
         db.close()

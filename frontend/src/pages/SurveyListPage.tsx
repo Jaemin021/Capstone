@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BarChart3, Copy, ExternalLink, FilePenLine, FilePlus2, Trash2 } from 'lucide-react'
+import { BarChart3, Copy, Eye, FilePenLine, FilePlus2, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { createPublicSurveyLink, deleteSurvey, getSurveyList } from '../api/surveyApi'
 import { LoadingSpinner } from '../components/LoadingSpinner'
@@ -129,7 +129,7 @@ export function SurveyListPage() {
           <div>
             <h1 className="text-lg font-black text-slate-950">저장된 설문</h1>
             <p className="mt-1 text-sm text-slate-600">
-              만든 설문을 확인하고, 응답 화면 또는 결과 통계로 이동할 수 있습니다.
+              만든 설문을 확인하고, 미리보기 또는 결과 통계로 이동할 수 있습니다.
             </p>
           </div>
           <Link
@@ -205,11 +205,11 @@ export function SurveyListPage() {
                         )}
                       </button>
                       <Link
-                        to={`/survey/${survey.survey_id}/respond`}
-                        className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                        to={`/survey/${survey.survey_id}/respond?preview=1`}
+                        className="inline-flex items-center gap-2 rounded-md border border-indigo-300 px-3 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-50"
                       >
-                        <ExternalLink size={15} />
-                        응답 화면
+                        <Eye size={15} />
+                        설문 미리보기
                       </Link>
                       <Link
                         to={`/survey/${survey.survey_id}/results`}

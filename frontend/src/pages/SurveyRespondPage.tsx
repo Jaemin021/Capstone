@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Smartphone } from 'lucide-react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   getPublicSurvey,
   getPublicSurveyAvailability,
@@ -156,29 +156,13 @@ function getDisplayOptions(item: BackendSurveyItem) {
   }))
 }
 
-function getRoleBadge(item: BackendSurveyItem) {
-  if (item.item_role === 'reverse') {
-    return {
-      label: '역문항',
-      className: 'bg-indigo-50 text-indigo-700',
-    }
-  }
-
-  if (item.item_role === 'trap') {
-    return {
-      label: '함정문항',
-      className: 'bg-rose-50 text-rose-700',
-    }
-  }
-
-  return null
-}
-
 export function SurveyRespondPage() {
   const { id = '', accessKey = '', inviteKey = '' } = useParams()
+  const [searchParams] = useSearchParams()
   const isOneTimeMode = Boolean(inviteKey)
   const isPublicMode = Boolean(accessKey) || isOneTimeMode
   const isDevicePublicMode = Boolean(accessKey) && !isOneTimeMode
+  const isPreviewMode = !isPublicMode || searchParams.get('preview') === '1'
   const surveyIdentifier = isPublicMode ? (isOneTimeMode ? inviteKey : accessKey) : id
   const navigate = useNavigate()
   const { pushToast } = useToastStore()
@@ -188,7 +172,7 @@ export function SurveyRespondPage() {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isMobileClient, setIsMobileClient] = useState(true)
   const requireMobileRespond = import.meta.env.VITE_REQUIRE_MOBILE_RESPOND === 'true'
-  const canAccessByDevicePolicy = !requireMobileRespond || isMobileClient
+  const canAccessByDevicePolicy = isPreviewMode || !requireMobileRespond || isMobileClient
   const publicDeviceId = useMemo(
     () => (isDevicePublicMode ? getOrCreatePublicDeviceId() : ''),
     [isDevicePublicMode],
@@ -573,6 +557,15 @@ export function SurveyRespondPage() {
   }
 
   const handleSubmit = () => {
+    if (isPreviewMode) {
+      pushToast({
+        type: 'info',
+        title: '미리보기 모드',
+        description: '미리보기에서는 실제 제출이 저장되지 않습니다.',
+      })
+      return
+    }
+
     if (isDevicePublicMode && !publicDeviceId) {
       pushToast({
         type: 'error',
@@ -665,7 +658,7 @@ export function SurveyRespondPage() {
     submitMutation.mutate(payload)
   }
 
-  if (requireMobileRespond && !isMobileClient) {
+  if (requireMobileRespond && !isMobileClient && !isPreviewMode) {
     return (
       <section className="rounded-lg border border-amber-200 bg-white p-6 shadow-sm">
         <div className="flex items-start gap-3">
@@ -749,10 +742,18 @@ export function SurveyRespondPage() {
 
   const selectedOptionOrder = currentItem ? session?.answers[currentItem.item_id] : undefined
   const isLast = currentIndex === items.length - 1
-  const canContinue = selectedOptionOrder !== undefined
+  const canContinue = isPreviewMode || selectedOptionOrder !== undefined
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
+      {isPreviewMode ? (
+        <section className="rounded-lg border border-indigo-200 bg-indigo-50 p-4 shadow-sm">
+          <p className="text-sm font-bold text-indigo-800">
+            PC 미리보기 모드: 화면 확인 전용이며 제출 데이터는 저장되지 않습니다.
+          </p>
+        </section>
+      ) : null}
+
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <p className="text-sm font-bold text-teal-700">{survey.title}</p>
         <h1 className="mt-1 text-2xl font-black text-slate-950">설문 응답</h1>
@@ -778,19 +779,6 @@ export function SurveyRespondPage() {
       <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center gap-2">
           <p className="text-sm font-black text-slate-500">Q{currentIndex + 1}</p>
-          {(() => {
-            const roleBadge = getRoleBadge(currentItem)
-
-            if (!roleBadge) {
-              return null
-            }
-
-            return (
-              <span className={`rounded-md px-2 py-1 text-xs font-bold ${roleBadge.className}`}>
-                {roleBadge.label}
-              </span>
-            )
-          })()}
         </div>
         <h2 className="mt-2 text-xl font-black leading-8 text-slate-950">
           {currentItem.question_text}
@@ -829,6 +817,15 @@ export function SurveyRespondPage() {
           </button>
 
           {isLast ? (
+            isPreviewMode ? (
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-2 rounded-md bg-indigo-700 px-5 py-2 text-sm font-bold text-white hover:bg-indigo-800"
+                onClick={() => navigate('/surveys')}
+              >
+                미리보기 종료
+              </button>
+            ) : (
             <button
               type="button"
               className="inline-flex items-center justify-center gap-2 rounded-md bg-teal-600 px-5 py-2 text-sm font-bold text-white hover:bg-teal-700 disabled:bg-slate-300"
@@ -844,6 +841,7 @@ export function SurveyRespondPage() {
                 </>
               )}
             </button>
+            )
           ) : (
             <button
               type="button"

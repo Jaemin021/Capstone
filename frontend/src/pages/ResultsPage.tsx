@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { useLocation, useParams } from 'react-router-dom'
 import {
+  downloadSurveyResponseFeaturesCsv,
   evaluateSurveyConstruct,
   evaluateSurveyQuality,
   evaluateSurveyStatistics,
@@ -156,6 +157,8 @@ function statusClassName(status?: EvaluationStatus) {
   return 'bg-slate-100 text-slate-600 ring-slate-200'
 }
 
+const SUGGESTED_REWRITE_THRESHOLD = 6
+
 function DetailButton({
   open,
   onClick,
@@ -288,6 +291,16 @@ function QualityRow({
   }
 
   const hasLlmError = Boolean(item.llm_error?.trim())
+  const hasLlmComment = Boolean(item.llm_comment?.trim())
+  const hasSuggestedRewrite = Boolean(item.suggested_rewrite?.trim())
+  const numericScore =
+    typeof item.quality_score === 'number' && Number.isFinite(item.quality_score)
+      ? item.quality_score
+      : null
+  const allowSuggestionByScore =
+    numericScore != null && numericScore < SUGGESTED_REWRITE_THRESHOLD
+  const canOpenDetail =
+    hasLlmError || (allowSuggestionByScore && (hasLlmComment || hasSuggestedRewrite))
   const problem = item.status === 'warning' || item.status === 'bad' || hasLlmError
 
   return (
@@ -315,12 +328,12 @@ function QualityRow({
           </div>
           <p className="text-sm leading-6 text-slate-800">{item.question_text}</p>
         </div>
-        {item.llm_comment || item.suggested_rewrite || hasLlmError ? (
+        {canOpenDetail ? (
           <DetailButton open={open} onClick={onToggle} label="제안본 보기" />
         ) : null}
       </div>
 
-      {open ? (
+      {open && canOpenDetail ? (
         <div className="mt-4 space-y-3 rounded-lg border border-white bg-white p-4 text-sm leading-6 text-slate-700">
           {hasLlmError ? (
             <div className="rounded-md bg-rose-50 p-3 text-rose-900">
@@ -515,6 +528,7 @@ export function ResultsPage() {
   const { pushToast } = useToastStore()
   const [responseDetailsOpen, setResponseDetailsOpen] = useState(false)
   const [openQualityItemId, setOpenQualityItemId] = useState<string | null>(null)
+  const [downloadingFeaturesCsv, setDownloadingFeaturesCsv] = useState(false)
 
   const responseResult =
     (location.state as { responseResult?: SurveyResponseSubmitResult } | null)?.responseResult ??
@@ -668,6 +682,31 @@ export function ResultsPage() {
     responseResult?.reliability?.status ?? responseResult?.features.reliability_status
   const reliabilityRespondentCount = reliabilityQuery.data?.total_count ?? reliabilityQuery.data?.respondents.length ?? 0
 
+  const handleDownloadFeaturesCsv = async () => {
+    if (!id || id === 'demo') {
+      pushToast({
+        type: 'error',
+        title: 'CSV 다운로드 실패',
+        description: '유효한 설문 ID가 없습니다.',
+      })
+      return
+    }
+
+    setDownloadingFeaturesCsv(true)
+    try {
+      await downloadSurveyResponseFeaturesCsv(id)
+      pushToast({ type: 'success', title: '응답 feature CSV 다운로드 완료' })
+    } catch (error) {
+      pushToast({
+        type: 'error',
+        title: 'CSV 다운로드 실패',
+        description: getErrorMessage(error, 'CSV 생성 중 오류가 발생했습니다.'),
+      })
+    } finally {
+      setDownloadingFeaturesCsv(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -710,6 +749,21 @@ export function ResultsPage() {
           {` (현재 누적 응답 ${reliabilityRespondentCount}명)`}
         </p>
 
+        <div className="mt-4">
+          <button
+            type="button"
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400"
+            disabled={downloadingFeaturesCsv || !id || id === 'demo'}
+            onClick={handleDownloadFeaturesCsv}
+          >
+            {downloadingFeaturesCsv ? (
+              <LoadingSpinner compact label="CSV 생성 중" />
+            ) : (
+              '응답 feature CSV 다운로드'
+            )}
+          </button>
+        </div>
+
         {responseScore != null ? (
           <div className="mt-5 space-y-4">
             <ScoreBar score={responseScore} label={`상태: ${statusLabel(responseStatus)}`} />
@@ -738,6 +792,7 @@ export function ResultsPage() {
               <h2 className="text-lg font-black text-slate-950">문항 품질 평가</h2>
               <p className="mt-1 text-sm text-slate-600">
                 일반 문항만 점수/상태를 표시하고, 역문항/함정문항은 태그로 구분합니다.
+                제안본은 점수가 {SUGGESTED_REWRITE_THRESHOLD}점 미만인 문항에서만 표시됩니다.
               </p>
             </div>
           </div>

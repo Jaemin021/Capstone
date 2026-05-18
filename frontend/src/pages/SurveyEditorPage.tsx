@@ -384,10 +384,10 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
                 <>
                   <button
                     type="button"
-                    className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800"
-                    onClick={() => navigate(`/survey/${savedSurveyId}/respond`)}
+                    className="inline-flex items-center gap-2 rounded-md border border-indigo-300 px-3 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-50"
+                    onClick={() => navigate(`/survey/${savedSurveyId}/respond?preview=1`)}
                   >
-                    응답 화면
+                    PC 미리보기
                   </button>
                   <Link
                     to={`/survey/${savedSurveyId}/results`}

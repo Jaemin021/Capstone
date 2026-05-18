@@ -100,6 +100,25 @@ function getMockSurveyStorageKey(surveyId: string) {
   return `mock-survey:${surveyId}`
 }
 
+function csvEscape(value: unknown) {
+  const text = String(value ?? '')
+  if (/[",\n\r]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`
+  }
+  return text
+}
+
+function triggerCsvDownload(blob: Blob, fileName: string) {
+  const url = window.URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = fileName
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.URL.revokeObjectURL(url)
+}
+
 export function saveResponseResultToStorage(
   surveyId: string,
   result: SurveyResponseSubmitResult,
@@ -698,4 +717,52 @@ export async function getSurveyItemStats(surveyId: string): Promise<ItemStatsRes
         distribution: [],
       })) ?? [],
   }
+}
+
+export async function downloadSurveyResponseFeaturesCsv(surveyId: string): Promise<void> {
+  const fileName = `survey-${surveyId}-response-features.csv`
+
+  if (useMockApi) {
+    const stored = readResponseResultFromStorage(surveyId)
+    const header = [
+      'response_id',
+      'survey_id',
+      'response_feature_id',
+      'reliability_score',
+      'reliability_status',
+      'avg_item_time_ms',
+      'too_fast_item_ratio',
+      'answer_changed_ratio',
+      'revisit_item_ratio',
+      'offline_ratio',
+    ]
+
+    const row = stored
+      ? [
+          stored.response_id,
+          stored.survey_id,
+          stored.response_feature_id,
+          stored.reliability?.score ?? '',
+          stored.reliability?.status ?? '',
+          stored.features?.avg_item_time_ms ?? '',
+          stored.features?.too_fast_item_ratio ?? '',
+          stored.features?.answer_changed_ratio ?? '',
+          stored.features?.revisit_item_ratio ?? '',
+          stored.features?.offline_ratio ?? '',
+        ]
+      : []
+
+    const csvText = [header.join(','), row.map(csvEscape).join(',')].join('\n')
+    const blob = new Blob([`\ufeff${csvText}`], { type: 'text/csv;charset=utf-8' })
+    triggerCsvDownload(blob, fileName)
+    return
+  }
+
+  const { data } = await http.get<Blob>(`/surveys/${surveyId}/response-features.csv`, {
+    responseType: 'blob',
+  })
+
+  const blob =
+    data instanceof Blob ? data : new Blob([data], { type: 'text/csv;charset=utf-8' })
+  triggerCsvDownload(blob, fileName)
 }

@@ -19,6 +19,7 @@ from services.item_quality_llm_service import evaluate_item_with_llm
 from services.item_quality_score_service import calculate_quality_score
 
 router = APIRouter(prefix="/survey-evaluations")
+SUGGESTED_REWRITE_THRESHOLD = 6.0
 
 
 def now_str():
@@ -37,6 +38,10 @@ def score_status(score, good=8.0, warning=6.0):
 
 def _has_text(value):
     return isinstance(value, str) and value.strip() != ""
+
+
+def _can_show_suggested_rewrite(score):
+    return isinstance(score, (int, float)) and score < SUGGESTED_REWRITE_THRESHOLD
 
 
 def build_fallback_rewrite(question_text, problem_categories):
@@ -123,6 +128,9 @@ def _evaluate_quality_without_long_db_lock(survey_id: str):
                 question_text=question_text,
                 problem_categories=problem_categories,
             )
+
+        if not _can_show_suggested_rewrite(score):
+            suggested_rewrite = ""
 
         eval_rows.append({
             "survey_id": survey_id,
@@ -213,7 +221,11 @@ def get_quality_results(survey_id: str):
                 "problem_categories": eval_row.problem_categories,
                 "detected_terms": eval_row.detected_terms,
                 "llm_comment": eval_row.llm_comment,
-                "suggested_rewrite": eval_row.suggested_rewrite,
+                "suggested_rewrite": (
+                    eval_row.suggested_rewrite
+                    if _can_show_suggested_rewrite(eval_row.quality_score)
+                    else ""
+                ),
                 "created_at": eval_row.created_at
             })
 
