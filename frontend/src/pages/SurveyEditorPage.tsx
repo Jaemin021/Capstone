@@ -16,7 +16,12 @@ import { CSS } from '@dnd-kit/utilities'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Eye, GripVertical, Plus, Save, X } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { createSurvey, getSurvey, updateSurvey } from '../api/surveyApi'
+import {
+  createSurvey,
+  DEFAULT_LIKERT_5_OPTIONS,
+  getSurvey,
+  updateSurvey,
+} from '../api/surveyApi'
 import { ItemCard } from '../components/ItemCard'
 import { LoadingSpinner } from '../components/LoadingSpinner'
 import { useSurveyStore } from '../store/surveyStore'
@@ -31,6 +36,8 @@ type SaveSurveyResult = {
   survey: Awaited<ReturnType<typeof createSurvey>>
   action: 'create' | 'update'
 }
+
+const emptyOptionValues = ['', '', '', '', '']
 
 function getApiErrorMessage(error: unknown, fallback: string) {
   if (typeof error !== 'object' || error === null) {
@@ -205,6 +212,7 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
     addItem,
     updateItem,
     updateItemOption,
+    setItemOptions,
     setSettings,
     reorderItems,
     setItemsFromBackendSurvey,
@@ -453,6 +461,14 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
               </div>
             </SortableContext>
           </DndContext>
+          <button
+            type="button"
+            className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+            onClick={addItem}
+          >
+            <Plus size={16} />
+            문항 추가
+          </button>
         </aside>
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -474,7 +490,25 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
               </label>
 
               <div className="rounded-lg border border-slate-200 p-4">
-                <h3 className="mb-3 text-sm font-black text-slate-900">보기 입력 (5개)</h3>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-black text-slate-900">보기 입력 (5개)</h3>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                      onClick={() => setItemOptions(selectedItem.id, DEFAULT_LIKERT_5_OPTIONS)}
+                    >
+                      표준 보기 채우기
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                      onClick={() => setItemOptions(selectedItem.id, emptyOptionValues)}
+                    >
+                      모두 비우기
+                    </button>
+                  </div>
+                </div>
                 <div className="space-y-2">
                   {selectedItem.options.slice(0, 5).map((option, optionIndex) => (
                     <label key={`${selectedItem.id}-option-${optionIndex}`} className="block">
@@ -482,12 +516,22 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
                       <input
                         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
                         value={option}
+                        placeholder={DEFAULT_LIKERT_5_OPTIONS[optionIndex] ?? `보기 ${optionIndex + 1}`}
                         onChange={(event) => updateItemOption(selectedItem.id, optionIndex, event.target.value)}
                       />
                     </label>
                   ))}
                 </div>
               </div>
+
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                onClick={addItem}
+              >
+                <Plus size={16} />
+                아래에 문항 추가
+              </button>
             </div>
           ) : (
             <div className="flex min-h-96 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 p-8 text-center">

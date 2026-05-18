@@ -8,6 +8,19 @@ import { useSurveyStore } from '../store/surveyStore'
 import { useToastStore } from '../store/toastStore'
 import type { SurveyListResponse } from '../types/survey'
 
+function resolvePublicRespondUrl(origin: string, publicPath: string) {
+  if (!origin) {
+    return publicPath
+  }
+
+  try {
+    const base = origin.endsWith('/') ? origin : `${origin}/`
+    return new URL(publicPath, base).toString()
+  } catch {
+    return `${origin}${publicPath.startsWith('/') ? publicPath : `/${publicPath}`}`
+  }
+}
+
 export function SurveyListPage() {
   const queryClient = useQueryClient()
   const pushToast = useToastStore((state) => state.pushToast)
@@ -19,6 +32,8 @@ export function SurveyListPage() {
   })
   const surveys = surveyListQuery.data?.surveys ?? []
   const origin = typeof window === 'undefined' ? '' : window.location.origin
+  const configuredPublicOrigin = (import.meta.env.VITE_PUBLIC_APP_ORIGIN || '').trim()
+  const publicOrigin = configuredPublicOrigin || origin
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null)
   const [publicLinkLoadingId, setPublicLinkLoadingId] = useState<string | null>(null)
 
@@ -66,7 +81,7 @@ export function SurveyListPage() {
 
     try {
       const link = await createPublicSurveyLink(surveyId, false)
-      const url = `${origin}${link.public_path}`
+      const url = resolvePublicRespondUrl(publicOrigin, link.public_path)
 
       try {
         await navigator.clipboard.writeText(url)

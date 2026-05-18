@@ -13,22 +13,16 @@ const createId = () =>
     ? crypto.randomUUID()
     : `item-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
-const defaultOptions = [
-  '전혀 그렇지 않다',
-  '그렇지 않다',
-  '보통이다',
-  '그렇다',
-  '매우 그렇다',
-]
+const defaultOptions = ['', '', '', '', '']
 
 const normalizeOptions = (options?: string[]) => {
   const next = (options ?? []).slice(0, 5)
 
   while (next.length < 5) {
-    next.push(`보기 ${next.length + 1}`)
+    next.push('')
   }
 
-  return next
+  return next.map((option) => option ?? '')
 }
 
 const initialItems: SurveyItem[] = [
@@ -72,6 +66,7 @@ interface SurveyStore {
   selectItem: (id: string) => void
   updateItem: (id: string, updates: Partial<Pick<SurveyItem, 'text' | 'type'>>) => void
   updateItemOption: (id: string, optionIndex: number, value: string) => void
+  setItemOptions: (id: string, options: string[]) => void
   removeItem: (id: string) => void
   reorderItems: (activeId: string, overId: string) => void
   replaceItemText: (id: string, text: string) => void
@@ -111,7 +106,20 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
     }
 
     set((state) => ({
-      items: [...state.items, item],
+      items: (() => {
+        if (!state.selectedItemId) {
+          return [...state.items, item]
+        }
+
+        const selectedIndex = state.items.findIndex((candidate) => candidate.id === state.selectedItemId)
+        if (selectedIndex < 0) {
+          return [...state.items, item]
+        }
+
+        const nextItems = [...state.items]
+        nextItems.splice(selectedIndex + 1, 0, item)
+        return nextItems
+      })(),
       selectedItemId: item.id,
     }))
   },
@@ -139,6 +147,19 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
           citc: undefined,
         }
       }),
+    })),
+  setItemOptions: (id, options) =>
+    set((state) => ({
+      items: state.items.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              options: normalizeOptions(options),
+              quality: undefined,
+              citc: undefined,
+            }
+          : item,
+      ),
     })),
   removeItem: (id) =>
     set((state) => {

@@ -187,6 +187,8 @@ export function SurveyRespondPage() {
   const [session, setSession] = useState<ResponseSession | null>(null)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isMobileClient, setIsMobileClient] = useState(true)
+  const requireMobileRespond = import.meta.env.VITE_REQUIRE_MOBILE_RESPOND === 'true'
+  const canAccessByDevicePolicy = !requireMobileRespond || isMobileClient
   const publicDeviceId = useMemo(
     () => (isDevicePublicMode ? getOrCreatePublicDeviceId() : ''),
     [isDevicePublicMode],
@@ -220,7 +222,7 @@ export function SurveyRespondPage() {
       }
       return getSurvey(id)
     },
-    enabled: Boolean(surveyIdentifier) && isMobileClient,
+    enabled: Boolean(surveyIdentifier) && canAccessByDevicePolicy,
   })
 
   const publicAvailabilityQuery = useQuery({
@@ -235,7 +237,7 @@ export function SurveyRespondPage() {
         ? getOneTimePublicSurveyAvailability(inviteKey)
         : getPublicSurveyAvailability(accessKey, publicDeviceId),
     enabled:
-      isMobileClient &&
+      canAccessByDevicePolicy &&
       isPublicMode &&
       surveyQuery.isSuccess &&
       (isOneTimeMode ? Boolean(inviteKey) : Boolean(accessKey) && Boolean(publicDeviceId)),
@@ -663,7 +665,7 @@ export function SurveyRespondPage() {
     submitMutation.mutate(payload)
   }
 
-  if (!isMobileClient) {
+  if (requireMobileRespond && !isMobileClient) {
     return (
       <section className="rounded-lg border border-amber-200 bg-white p-6 shadow-sm">
         <div className="flex items-start gap-3">
