@@ -1,0 +1,387 @@
+# backend/routers/survey_evaluations.py
+
+from datetime import datetime
+import re
+from fastapi import APIRouter
+from database import SessionLocal
+import models
+
+from services.survey_statistical_evaluation_service import (
+    evaluate_survey_statistics,
+    build_response_score_matrix,
+)
+from services.item_construct_evaluation_service import (
+    evaluate_construct_for_survey,
+    sanitize_construct_llm_features,
+)
+
+from services.item_quality_llm_service import evaluate_item_with_llm
+from services.item_quality_score_service import calculate_quality_score
+
+router = APIRouter(prefix="/survey-evaluations")
+SUGGESTED_REWRITE_THRESHOLD = 6.0
+
+
+def now_str():
+    return datetime.now().isoformat()
+
+
+def score_status(score, good=8.0, warning=6.0):
+    if score is None:
+        return "unknown"
+    if score >= good:
+        return "good"
+    if score >= warning:
+        return "warning"
+    return "bad"
+
+
+def _has_text(value):
+    return isinstance(value, str) and value.strip() != ""
+
+
+def _can_show_suggested_rewrite(score):
+    return isinstance(score, (int, float)) and score < SUGGESTED_REWRITE_THRESHOLD
+
+
+def build_fallback_rewrite(question_text, problem_categories):
+    base_question = (question_text or "").strip()
+    if not base_question:
+        return ""
+
+    categories = set(problem_categories or [])
+    normalized = re.sub(r"\s+", " ", base_question)
+    normalized = re.sub(r"[.?!]+$", "", normalized).strip()
+
+    prefix = ""
+    if "ambiguous_time" in categories or "answerability_issue" in categories:
+        prefix = "지난 2주 동안, "
+    elif "double_barreled" in categories or "single_concept_issue" in categories:
+        prefix = "한 가지 행동 기준으로, "
+
+    proposal = f"{prefix}{normalized}".strip()
+    if not proposal.endswith("."):
+        proposal = proposal + "."
+
+    return proposal
+
+
+def _evaluate_quality_without_long_db_lock(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        items = db.query(models.SurveyItem).filter_by(
+            survey_id=survey_id,
+            item_role="normal"
+        ).order_by(models.SurveyItem.item_order).all()
+
+        item_snapshots = []
+
+        for item in items:
+            options = db.query(models.SurveyItemOption).filter_by(
+                item_id=item.item_id
+            ).order_by(models.SurveyItemOption.option_order).all()
+
+            item_snapshots.append({
+                "item_id": item.item_id,
+                "item_order": item.item_order,
+                "question_text": item.question_text,
+                "option_texts": [opt.option_label for opt in options],
+            })
+
+    finally:
+        db.close()
+
+    results = []
+    eval_rows = []
+    debug_errors = []
+
+    for item in item_snapshots:
+        question_text = item["question_text"]
+
+        llm_result = None
+        llm_error = None
+
+        try:
+            llm_result = evaluate_item_with_llm(
+                question_text,
+                item["option_texts"]
+            )
+        except Exception as e:
+            llm_error = repr(e)
+            debug_errors.append({
+                "item_id": item["item_id"],
+                "item_order": item["item_order"],
+                "error": llm_error
+            })
+
+        score = calculate_quality_score(llm_result)
+        problem_categories = llm_result.get("problem_categories") if isinstance(llm_result, dict) else None
+        detected_terms = llm_result.get("detected_terms") if isinstance(llm_result, dict) else None
+        llm_comment = llm_result.get("llm_comment") if isinstance(llm_result, dict) else None
+        suggested_rewrite = llm_result.get("suggested_rewrite") if isinstance(llm_result, dict) else None
+
+        status = score_status(score)
+
+        if status in ["warning", "bad"] and not _has_text(suggested_rewrite):
+            suggested_rewrite = build_fallback_rewrite(
+                question_text=question_text,
+                problem_categories=problem_categories,
+            )
+
+        if not _can_show_suggested_rewrite(score):
+            suggested_rewrite = ""
+
+        eval_rows.append({
+            "survey_id": survey_id,
+            "item_id": item["item_id"],
+            "quality_score": score,
+            "problem_categories": problem_categories,
+            "detected_terms": detected_terms,
+            "llm_comment": llm_comment,
+            "suggested_rewrite": suggested_rewrite,
+            "created_at": now_str(),
+        })
+
+        results.append({
+            "item_id": item["item_id"],
+            "item_order": item["item_order"],
+            "question_text": question_text,
+            "quality_score": score,
+            "status": status,
+            "problem_categories": problem_categories,
+            "detected_terms": detected_terms,
+            "llm_comment": llm_comment,
+            "suggested_rewrite": suggested_rewrite,
+            "llm_error": llm_error
+        })
+
+    db = SessionLocal()
+
+    try:
+        db.query(models.ItemQualityEvaluation).filter_by(
+            survey_id=survey_id
+        ).delete(synchronize_session=False)
+
+        for eval_row in eval_rows:
+            db.add(models.ItemQualityEvaluation(**eval_row))
+
+        db.commit()
+
+        response = {
+            "survey_id": survey_id,
+            "results": results
+        }
+        if debug_errors:
+            response["debug"] = {
+                "errors": debug_errors
+            }
+        return response
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
+
+
+@router.post("/{survey_id}/quality")
+def evaluate_quality(survey_id: str):
+    return _evaluate_quality_without_long_db_lock(survey_id)
+
+
+@router.get("/{survey_id}/quality")
+def get_quality_results(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        rows = db.query(
+            models.SurveyItem,
+            models.ItemQualityEvaluation
+        ).join(
+            models.ItemQualityEvaluation,
+            models.SurveyItem.item_id == models.ItemQualityEvaluation.item_id
+        ).filter(
+            models.SurveyItem.survey_id == survey_id,
+            models.SurveyItem.item_role == "normal"
+        ).order_by(
+            models.SurveyItem.item_order
+        ).all()
+
+        results = []
+
+        for item, eval_row in rows:
+            results.append({
+                "item_id": item.item_id,
+                "item_order": item.item_order,
+                "question_text": item.question_text,
+                "quality_score": eval_row.quality_score,
+                "status": score_status(eval_row.quality_score),
+                "problem_categories": eval_row.problem_categories,
+                "detected_terms": eval_row.detected_terms,
+                "llm_comment": eval_row.llm_comment,
+                "suggested_rewrite": (
+                    eval_row.suggested_rewrite
+                    if _can_show_suggested_rewrite(eval_row.quality_score)
+                    else ""
+                ),
+                "created_at": eval_row.created_at
+            })
+
+        return {
+            "survey_id": survey_id,
+            "results": results
+        }
+
+    finally:
+        db.close()
+
+
+@router.post("/{survey_id}/construct")
+def evaluate_construct(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        result = evaluate_construct_for_survey(
+            db=db,
+            survey_id=survey_id,
+            overwrite=True
+        )
+        return result
+
+    finally:
+        db.close()
+
+
+@router.get("/{survey_id}/construct")
+def get_construct_results(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        rows = db.query(
+            models.SurveyItem,
+            models.ConstructEvaluation
+        ).join(
+            models.ConstructEvaluation,
+            models.SurveyItem.item_id == models.ConstructEvaluation.item_id
+        ).filter(
+            models.SurveyItem.survey_id == survey_id,
+            models.SurveyItem.item_role == "normal"
+        ).order_by(
+            models.SurveyItem.item_order
+        ).all()
+
+        results = []
+
+        for item, eval_row in rows:
+            combined_score = None
+            if eval_row.embedding_score is not None and eval_row.llm_score is not None:
+                combined_score = round(
+                    eval_row.embedding_score * 0.4 + eval_row.llm_score * 0.6,
+                    3
+                )
+
+            results.append({
+                "item_id": item.item_id,
+                "item_order": item.item_order,
+                "question_text": item.question_text,
+                "embedding_features": eval_row.embedding_features,
+                "embedding_score": eval_row.embedding_score,
+                "llm_features": sanitize_construct_llm_features(eval_row.llm_features),
+                "llm_score": eval_row.llm_score,
+                "combined_score": combined_score,
+                "status": score_status(combined_score),
+                "predicted_citc": eval_row.predicted_citc,
+                "predicted_alpha_impact": eval_row.predicted_alpha_impact,
+                "created_at": eval_row.created_at
+            })
+
+        return {
+            "survey_id": survey_id,
+            "results": results
+        }
+
+    finally:
+        db.close()
+
+
+@router.post("/{survey_id}/statistics")
+def evaluate_statistics(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        result = evaluate_survey_statistics(
+            db=db,
+            survey_id=survey_id,
+            overwrite=True
+        )
+        return result
+
+    finally:
+        db.close()
+
+
+@router.get("/{survey_id}/statistics")
+def get_statistics_results(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        stat = db.query(models.SurveyStatisticalEvaluation).filter_by(
+            survey_id=survey_id
+        ).order_by(
+            models.SurveyStatisticalEvaluation.created_at.desc()
+        ).first()
+
+        if not stat:
+            return {
+                "survey_id": survey_id,
+                "result": None,
+                "message": "No statistical evaluation found."
+            }
+
+        _, _, sample_metadata = build_response_score_matrix(db, survey_id)
+
+        normal_items = db.query(models.SurveyItem).filter_by(
+            survey_id=survey_id,
+            item_role="normal"
+        ).order_by(models.SurveyItem.item_order).all()
+
+        item_map = {
+            item.item_id: {
+                "item_id": item.item_id,
+                "item_order": item.item_order,
+                "question_text": item.question_text
+            }
+            for item in normal_items
+        }
+
+        item_results = []
+
+        citc_results = stat.item_citc_results or {}
+        alpha_deleted = stat.alpha_if_item_deleted or {}
+
+        for item_id, item_info in item_map.items():
+            citc = citc_results.get(item_id)
+            alpha_if_deleted = alpha_deleted.get(item_id)
+
+            item_results.append({
+                **item_info,
+                "citc": citc,
+                "citc_status": score_status(citc, good=0.4, warning=0.2),
+                "alpha_if_item_deleted": alpha_if_deleted
+            })
+
+        return {
+            "survey_id": survey_id,
+            "response_count": stat.response_count,
+            "raw_response_count": sample_metadata.get("raw_response_count", stat.response_count),
+            "excluded_response_count": sample_metadata.get("excluded_response_count", 0),
+            "cronbach_alpha": stat.cronbach_alpha,
+            "alpha_status": score_status(stat.cronbach_alpha, good=0.7, warning=0.6),
+            "items": item_results,
+            "created_at": stat.created_at
+        }
+
+    finally:
+        db.close()
