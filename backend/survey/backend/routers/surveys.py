@@ -1331,6 +1331,21 @@ def download_survey_response_features_csv(survey_id: str):
         if survey is None:
             raise HTTPException(status_code=404, detail="survey not found")
 
+        survey_items = db.query(models.SurveyItem).filter_by(
+            survey_id=survey_id
+        ).order_by(models.SurveyItem.item_order.asc()).all()
+
+        ordered_item_orders = [
+            item.item_order
+            for item in survey_items
+            if item.item_order is not None
+        ]
+        item_order_by_id = {
+            item.item_id: item.item_order
+            for item in survey_items
+            if item.item_order is not None
+        }
+
         rows = db.query(
             models.Response,
             models.ResponseFeature,
@@ -1351,6 +1366,30 @@ def download_survey_response_features_csv(survey_id: str):
 
         ordered_compact_keys = sorted(compact_keys)
 
+        response_ids = [response.response_id for response, _ in rows]
+        item_logs_by_response = {}
+        if response_ids:
+            item_logs = db.query(models.ResponseItemLog).filter(
+                models.ResponseItemLog.response_id.in_(response_ids)
+            ).all()
+
+            for item_log in item_logs:
+                item_order = item_order_by_id.get(item_log.item_id)
+                if item_order is None:
+                    continue
+
+                response_map = item_logs_by_response.setdefault(item_log.response_id, {})
+                value = item_log.item_time_ms
+
+                if value is None:
+                    continue
+
+                previous = response_map.get(item_order)
+                if previous is None or value > previous:
+                    response_map[item_order] = value
+
+        item_time_columns = [f"item_{order}_time_ms" for order in ordered_item_orders]
+
         header = [
             "response_id",
             "respondent_id",
@@ -1359,7 +1398,8 @@ def download_survey_response_features_csv(survey_id: str):
             "is_completed",
             "reliability_score",
             "reliability_status",
-        ] + ordered_compact_keys + [
+        ] + ordered_compact_keys + item_time_columns + [
+            "item_time_ms_by_order_json",
             "log_features_json",
             "content_features_json",
             "relation_features_json",
@@ -1400,7 +1440,18 @@ def download_survey_response_features_csv(survey_id: str):
                 else:
                     row.append(value if value is not None else "")
 
+            item_time_map = item_logs_by_response.get(response.response_id, {})
+            for order in ordered_item_orders:
+                row.append(_safe_float_or_empty(item_time_map.get(order)))
+
+            item_time_json = {
+                str(order): item_time_map.get(order)
+                for order in ordered_item_orders
+                if item_time_map.get(order) is not None
+            }
+
             row.extend([
+                _json_text(item_time_json),
                 _json_text(feature.log_features),
                 _json_text(feature.content_features),
                 _json_text(feature.relation_features),
