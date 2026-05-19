@@ -65,9 +65,6 @@ export function ItemCard({
           <p className="line-clamp-3 text-sm font-medium leading-6 text-slate-800">
             {item.text || '새 문항을 입력해 주세요.'}
           </p>
-          {item.itemCategory ? (
-            <p className="mt-2 text-xs font-semibold text-indigo-700">유형: {item.itemCategory}</p>
-          ) : null}
         </button>
         <button
           type="button"

@@ -805,6 +805,10 @@ export function ResultsPage() {
   const { pushToast } = useToastStore()
   const [responseDetailsOpen, setResponseDetailsOpen] = useState(false)
   const [openQualityItemId, setOpenQualityItemId] = useState<string | null>(null)
+  const [qualityRowsOpen, setQualityRowsOpen] = useState(false)
+  const [constructRowsOpen, setConstructRowsOpen] = useState(false)
+  const [itemFeatureRowsOpen, setItemFeatureRowsOpen] = useState(false)
+  const [statisticsRowsOpen, setStatisticsRowsOpen] = useState(false)
   const [downloadingFeaturesCsv, setDownloadingFeaturesCsv] = useState(false)
   const [downloadingItemEvaluationsCsv, setDownloadingItemEvaluationsCsv] = useState(false)
 
@@ -862,6 +866,7 @@ export function ResultsPage() {
         return
       }
 
+      setQualityRowsOpen(true)
       pushToast({ type: 'success', title: '문항 품질 평가 완료' })
     },
     onError: (error) => {
@@ -879,6 +884,7 @@ export function ResultsPage() {
     onSuccess: (data) => {
       console.log('[results] construct mutation response', data)
       queryClient.invalidateQueries({ queryKey: ['survey-construct', id] })
+      setConstructRowsOpen(true)
       pushToast({ type: 'success', title: '문항 구성 타당도 평가 완료' })
     },
     onError: (error) => {
@@ -896,6 +902,7 @@ export function ResultsPage() {
     onSuccess: (data) => {
       console.log('[results] statistics mutation response', data)
       queryClient.invalidateQueries({ queryKey: ['survey-statistics', id] })
+      setStatisticsRowsOpen(true)
       pushToast({ type: 'success', title: '통계 분석 완료' })
     },
     onError: (error) => {
@@ -1237,26 +1244,36 @@ export function ResultsPage() {
           개 / 평가 완료: {evaluatedQualityCount}개 / 문제 문항: {problemQualityCount}개
         </p>
 
-        <div className="space-y-3">
-          {qualityDisplayItems.length > 0 ? (
-            qualityDisplayItems.map((item) => (
-              <QualityRow
-                key={item.item_id}
-                item={item}
-                open={openQualityItemId === item.item_id}
-                onToggle={() =>
-                  setOpenQualityItemId((current) =>
-                    current === item.item_id ? null : item.item_id,
-                  )
-                }
-              />
-            ))
-          ) : (
-            <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-              저장된 품질 평가 결과가 없습니다. 버튼을 눌러 평가를 실행해 주세요.
-            </p>
-          )}
+        <div className="mb-4">
+          <DetailButton
+            open={qualityRowsOpen}
+            onClick={() => setQualityRowsOpen((open) => !open)}
+            label={`문항 목록 보기 (${qualityDisplayItems.length}개)`}
+          />
         </div>
+
+        {qualityRowsOpen ? (
+          <div className="space-y-3">
+            {qualityDisplayItems.length > 0 ? (
+              qualityDisplayItems.map((item) => (
+                <QualityRow
+                  key={item.item_id}
+                  item={item}
+                  open={openQualityItemId === item.item_id}
+                  onToggle={() =>
+                    setOpenQualityItemId((current) =>
+                      current === item.item_id ? null : item.item_id,
+                    )
+                  }
+                />
+              ))
+            ) : (
+              <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+                저장된 품질 평가 결과가 없습니다. 버튼을 눌러 평가를 실행해 주세요.
+              </p>
+            )}
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -1284,17 +1301,27 @@ export function ResultsPage() {
           </button>
         </div>
 
-        <div className="space-y-3">
-          {constructResults.length > 0 ? (
-            constructResults.map((item) => (
-              <ConstructRow key={item.item_id} item={item} />
-            ))
-          ) : (
-            <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-              저장된 구성 타당도 평가 결과가 없습니다.
-            </p>
-          )}
+        <div className="mb-4">
+          <DetailButton
+            open={constructRowsOpen}
+            onClick={() => setConstructRowsOpen((open) => !open)}
+            label={`문항 목록 보기 (${constructResults.length}개)`}
+          />
         </div>
+
+        {constructRowsOpen ? (
+          <div className="space-y-3">
+            {constructResults.length > 0 ? (
+              constructResults.map((item) => (
+                <ConstructRow key={item.item_id} item={item} />
+              ))
+            ) : (
+              <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+                저장된 구성 타당도 평가 결과가 없습니다.
+              </p>
+            )}
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -1313,8 +1340,17 @@ export function ResultsPage() {
           문항마다 품질/구성/통계 feature를 한 번에 확인할 수 있습니다.
         </p>
         <div className="mt-4">
-          <ItemFeaturePanel rows={itemFeatureRows} />
+          <DetailButton
+            open={itemFeatureRowsOpen}
+            onClick={() => setItemFeatureRowsOpen((open) => !open)}
+            label={`문항별 feature 펼치기 (${itemFeatureRows.length}개)`}
+          />
         </div>
+        {itemFeatureRowsOpen ? (
+          <div className="mt-4">
+            <ItemFeaturePanel rows={itemFeatureRows} />
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -1365,7 +1401,19 @@ export function ResultsPage() {
           </div>
         </div>
 
-        <StatisticsPanel statistics={statisticsQuery.data} />
+        <div className="mt-4">
+          <DetailButton
+            open={statisticsRowsOpen}
+            onClick={() => setStatisticsRowsOpen((open) => !open)}
+            label="문항 통계 상세 펼치기"
+          />
+        </div>
+
+        {statisticsRowsOpen ? (
+          <div className="mt-4">
+            <StatisticsPanel statistics={statisticsQuery.data} />
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">

@@ -38,7 +38,7 @@ type SaveSurveyResult = {
 }
 
 const emptyOptionValues = ['', '', '', '', '']
-type SpreadsheetImportRow = { text: string; itemCategory: string; options: string[] }
+type SpreadsheetImportRow = { text: string; options: string[] }
 type SpreadsheetImportResult = {
   rows: SpreadsheetImportRow[]
 }
@@ -87,43 +87,6 @@ function normalizeHeaderCell(value: string) {
   return value.toLowerCase().replace(/\s+/g, '')
 }
 
-function normalizeItemCategory(value?: string) {
-  const raw = (value ?? '').trim()
-  if (!raw) {
-    return ''
-  }
-
-  const tokens = raw
-    .split('/')
-    .map((token) => token.trim())
-    .filter((token) => token.length > 0)
-
-  const unique: string[] = []
-  const seen = new Set<string>()
-  tokens.forEach((token) => {
-    const key = token.toLowerCase()
-    if (!seen.has(key)) {
-      seen.add(key)
-      unique.push(token)
-    }
-  })
-
-  return unique.join(' / ')
-}
-
-function isTypeColumnHeader(value: string) {
-  const normalized = normalizeHeaderCell(value)
-  return (
-    normalized === '유형' ||
-    normalized === '문항유형' ||
-    normalized === 'type' ||
-    normalized === 'category' ||
-    normalized === 'topic' ||
-    normalized === 'factor' ||
-    normalized.includes('유형')
-  )
-}
-
 function isSpreadsheetHeader(columns: string[]) {
   const hasQuestionLabel = columns.some((column) => {
     const value = normalizeHeaderCell(column)
@@ -168,32 +131,6 @@ function detectQuestionColumnIndex(columns: string[]) {
   }
 
   return 0
-}
-
-function detectTypeColumnIndex(columns: string[], questionColumnIndex: number) {
-  for (let index = 0; index < columns.length; index += 1) {
-    if (isTypeColumnHeader(columns[index] ?? '')) {
-      return index
-    }
-  }
-
-  const first = normalizeHeaderCell(columns[0] ?? '')
-  const third = normalizeHeaderCell(columns[2] ?? '')
-
-  if (
-    columns.length >= 3 &&
-    (first.includes('번호') || first.includes('no') || first.includes('num')) &&
-    isTypeColumnHeader(columns[1] ?? '') &&
-    (third.includes('문항') || third.includes('question'))
-  ) {
-    return 1
-  }
-
-  if (questionColumnIndex >= 2) {
-    return questionColumnIndex - 1
-  }
-
-  return null
 }
 
 function detectOptionStartIndex(columns: string[], questionColumnIndex: number) {
@@ -251,8 +188,6 @@ function parseSpreadsheetRows(rawText: string): SpreadsheetImportResult {
 
   let questionColumnIndex =
     headerIndex >= 0 ? detectQuestionColumnIndex(parsedLines[headerIndex]) : 0
-  let typeColumnIndex =
-    headerIndex >= 0 ? detectTypeColumnIndex(parsedLines[headerIndex], questionColumnIndex) : null
   let optionStartIndex =
     headerIndex >= 0
       ? detectOptionStartIndex(parsedLines[headerIndex], questionColumnIndex)
@@ -263,39 +198,49 @@ function parseSpreadsheetRows(rawText: string): SpreadsheetImportResult {
     const firstRow = parsedLines[rowStartIndex]
     const firstCell = (firstRow[0] ?? '').trim()
     const secondCell = (firstRow[1] ?? '').trim()
-    const thirdCell = (firstRow[2] ?? '').trim()
     if (/^\d+$/.test(firstCell) && secondCell.length > 0) {
-      if (thirdCell.length > 0) {
-        typeColumnIndex = 1
-        questionColumnIndex = 2
-        optionStartIndex = 3
-      } else {
-        questionColumnIndex = 1
-        optionStartIndex = 2
-      }
+      questionColumnIndex = 1
+      optionStartIndex = 2
     }
   }
   const rows: SpreadsheetImportRow[] = []
 
   parsedLines.slice(rowStartIndex).forEach((columns) => {
+    if (columns.length >= 6) {
+      const optionCells = columns.slice(-5)
+      const headCells = columns.slice(0, columns.length - 5)
+      const startsWithNumber = /^\d+$/.test((headCells[0] ?? '').trim())
+      const text = headCells.slice(startsWithNumber ? 1 : 0).join(',').trim()
+
+      if (!text) {
+        return
+      }
+
+      const options = optionCells.map((value, optionIndex) => {
+        const fromSheet = (value ?? '').trim()
+        return fromSheet || DEFAULT_LIKERT_5_OPTIONS[optionIndex] || ''
+      })
+
+      rows.push({ text, options })
+      return
+    }
+
     const normalizedColumns = normalizeSpreadsheetDataRow(
       columns,
       questionColumnIndex,
       optionStartIndex,
     )
+
     const text = (normalizedColumns[questionColumnIndex] ?? '').trim()
     if (!text) {
       return
     }
-    const itemCategory =
-      typeColumnIndex != null ? normalizeItemCategory(normalizedColumns[typeColumnIndex]) : ''
-
     const options = Array.from({ length: 5 }, (_, optionIndex) => {
       const fromSheet = (normalizedColumns[optionStartIndex + optionIndex] ?? '').trim()
       return fromSheet || DEFAULT_LIKERT_5_OPTIONS[optionIndex] || ''
     })
 
-    rows.push({ text, itemCategory, options })
+    rows.push({ text, options })
   })
 
   return { rows }
@@ -397,7 +342,7 @@ function buildSurveyPayload(
       .map((item, index) => ({
         item_order: index + 1,
         question_text: item.text.trim(),
-        item_category: emptyToNull(item.itemCategory),
+        item_category: null,
         question_type: toBackendQuestionType(),
         is_required: true,
         options: item.options.slice(0, 5).map((label, optionIndex) => ({
@@ -786,21 +731,6 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
                 />
               </label>
 
-              <label className="block">
-                <span className="mb-2 block text-sm font-bold text-slate-700">유형 (선택)</span>
-                <input
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
-                  placeholder="예: 사용성 / 만족도 / 접근성"
-                  value={selectedItem.itemCategory ?? ''}
-                  onChange={(event) =>
-                    updateItem(selectedItem.id, { itemCategory: event.target.value })
-                  }
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  여러 유형은 `/`로 구분해 입력할 수 있고, 중복은 자동 정리됩니다.
-                </p>
-              </label>
-
               <div className="rounded-lg border border-slate-200 p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-black text-slate-900">보기 입력 (5개)</h3>
@@ -872,8 +802,8 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
             </p>
             <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs leading-6 text-slate-700">
               <p>예시 형식</p>
-              <p>번호,유형,문항,보기1,보기2,보기3,보기4,보기5</p>
-              <p>1,사용성 / 접근성,서비스가 편리하다,전혀 아니다,아니다,보통이다,그렇다,매우 그렇다</p>
+              <p>번호,문항,보기1,보기2,보기3,보기4,보기5</p>
+              <p>1,서비스가 편리하다,전혀 아니다,아니다,보통이다,그렇다,매우 그렇다</p>
             </div>
             <textarea
               className="mt-3 min-h-64 w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
@@ -963,9 +893,6 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
               {items.map((item, index) => (
                 <li key={item.id} className="rounded-lg border border-slate-200 p-4">
                   <p className="text-sm font-bold text-slate-500">Q{index + 1}</p>
-                  {item.itemCategory ? (
-                    <p className="mt-1 text-xs font-semibold text-indigo-700">유형: {item.itemCategory}</p>
-                  ) : null}
                   <p className="mt-1 text-sm leading-6 text-slate-800">{item.text || '빈 문항입니다.'}</p>
                   <ul className="mt-3 space-y-1">
                     {item.options.slice(0, 5).map((option, optionIndex) => (
