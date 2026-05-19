@@ -47,6 +47,22 @@ def _json_text(value):
     return json.dumps(value, ensure_ascii=False) if value is not None else ""
 
 
+def _score_status(score, good=8.0, warning=6.0):
+    if score is None:
+        return "unknown"
+
+    try:
+        numeric = float(score)
+    except Exception:
+        return "unknown"
+
+    if numeric >= good:
+        return "good"
+    if numeric >= warning:
+        return "warning"
+    return "bad"
+
+
 def get_survey_by_access_key(db, access_key: str):
     return db.query(models.Survey).filter_by(
         external_survey_key=access_key
@@ -1356,6 +1372,182 @@ def download_survey_response_features_csv(survey_id: str):
 
         csv_text = "\ufeff" + buffer.getvalue()
         filename = f"survey-{survey_id}-response-features.csv"
+
+        return PlainTextResponse(
+            content=csv_text,
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            },
+        )
+
+    finally:
+        db.close()
+
+
+@router.get("/{survey_id}/item-evaluations.csv")
+def download_survey_item_evaluations_csv(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        survey = db.query(models.Survey).filter_by(survey_id=survey_id).first()
+        if survey is None:
+            raise HTTPException(status_code=404, detail="survey not found")
+
+        items = db.query(models.SurveyItem).filter_by(
+            survey_id=survey_id
+        ).order_by(
+            models.SurveyItem.item_order.asc()
+        ).all()
+
+        item_ids = [item.item_id for item in items]
+
+        options_map = {}
+        if item_ids:
+            options = db.query(models.SurveyItemOption).filter(
+                models.SurveyItemOption.item_id.in_(item_ids)
+            ).order_by(
+                models.SurveyItemOption.item_id.asc(),
+                models.SurveyItemOption.option_order.asc(),
+            ).all()
+
+            for opt in options:
+                options_map.setdefault(opt.item_id, []).append({
+                    "option_order": opt.option_order,
+                    "option_label": opt.option_label,
+                    "option_score": opt.option_score,
+                })
+
+        quality_map = {
+            row.item_id: row
+            for row in db.query(models.ItemQualityEvaluation).filter_by(survey_id=survey_id).all()
+        }
+        construct_map = {
+            row.item_id: row
+            for row in db.query(models.ConstructEvaluation).filter_by(survey_id=survey_id).all()
+        }
+
+        statistics = db.query(models.SurveyStatisticalEvaluation).filter_by(
+            survey_id=survey_id
+        ).order_by(
+            models.SurveyStatisticalEvaluation.created_at.desc()
+        ).first()
+
+        item_citc_map = (statistics.item_citc_results or {}) if statistics else {}
+        alpha_if_deleted_map = (statistics.alpha_if_item_deleted or {}) if statistics else {}
+
+        statistics_response_count = statistics.response_count if statistics else ""
+        statistics_cronbach_alpha = (
+            _safe_float_or_empty(statistics.cronbach_alpha) if statistics else ""
+        )
+        statistics_alpha_status = (
+            _score_status(statistics.cronbach_alpha, good=0.7, warning=0.6)
+            if statistics
+            else "unknown"
+        )
+        statistics_created_at = statistics.created_at if statistics else ""
+
+        header = [
+            "survey_id",
+            "item_id",
+            "item_order",
+            "item_role",
+            "is_generated",
+            "source_item_id",
+            "question_text",
+            "options_json",
+            "quality_score",
+            "quality_status",
+            "quality_problem_categories_json",
+            "quality_detected_terms_json",
+            "quality_llm_comment",
+            "quality_suggested_rewrite",
+            "quality_created_at",
+            "construct_embedding_score",
+            "construct_llm_score",
+            "construct_combined_score",
+            "construct_status",
+            "construct_predicted_citc",
+            "construct_predicted_alpha_impact",
+            "construct_embedding_features_json",
+            "construct_llm_features_json",
+            "construct_created_at",
+            "statistics_response_count",
+            "statistics_cronbach_alpha",
+            "statistics_alpha_status",
+            "statistics_item_citc",
+            "statistics_item_citc_status",
+            "statistics_alpha_if_item_deleted",
+            "statistics_created_at",
+        ]
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(header)
+
+        for item in items:
+            quality = quality_map.get(item.item_id)
+            construct = construct_map.get(item.item_id)
+
+            quality_score = quality.quality_score if quality else None
+            quality_status = _score_status(quality_score, good=8.0, warning=6.0)
+
+            embedding_score = construct.embedding_score if construct else None
+            llm_score = construct.llm_score if construct else None
+            combined_score = None
+            if embedding_score is not None and llm_score is not None:
+                try:
+                    combined_score = round(float(embedding_score) * 0.4 + float(llm_score) * 0.6, 3)
+                except Exception:
+                    combined_score = None
+
+            construct_status = _score_status(combined_score, good=8.0, warning=6.0)
+
+            statistics_item_citc = item_citc_map.get(item.item_id)
+            statistics_item_citc_status = _score_status(
+                statistics_item_citc,
+                good=0.4,
+                warning=0.2,
+            )
+            statistics_alpha_if_item_deleted = alpha_if_deleted_map.get(item.item_id)
+
+            row = [
+                survey_id,
+                item.item_id,
+                item.item_order,
+                item.item_role or "",
+                bool(item.is_generated),
+                item.source_item_id or "",
+                item.question_text or "",
+                _json_text(options_map.get(item.item_id, [])),
+                _safe_float_or_empty(quality_score),
+                quality_status,
+                _json_text(quality.problem_categories if quality else None),
+                _json_text(quality.detected_terms if quality else None),
+                (quality.llm_comment if quality and quality.llm_comment is not None else ""),
+                (quality.suggested_rewrite if quality and quality.suggested_rewrite is not None else ""),
+                (quality.created_at if quality and quality.created_at is not None else ""),
+                _safe_float_or_empty(embedding_score),
+                _safe_float_or_empty(llm_score),
+                _safe_float_or_empty(combined_score),
+                construct_status,
+                _safe_float_or_empty(construct.predicted_citc if construct else None),
+                _safe_float_or_empty(construct.predicted_alpha_impact if construct else None),
+                _json_text(construct.embedding_features if construct else None),
+                _json_text(construct.llm_features if construct else None),
+                (construct.created_at if construct and construct.created_at is not None else ""),
+                statistics_response_count,
+                statistics_cronbach_alpha,
+                statistics_alpha_status,
+                _safe_float_or_empty(statistics_item_citc),
+                statistics_item_citc_status,
+                _safe_float_or_empty(statistics_alpha_if_item_deleted),
+                statistics_created_at,
+            ]
+            writer.writerow(row)
+
+        csv_text = "\ufeff" + buffer.getvalue()
+        filename = f"survey-{survey_id}-item-evaluations.csv"
 
         return PlainTextResponse(
             content=csv_text,

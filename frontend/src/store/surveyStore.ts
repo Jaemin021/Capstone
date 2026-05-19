@@ -77,6 +77,7 @@ interface SurveyStore {
     survey: BackendSurveyResponse,
     options?: { normalItemsOnly?: boolean },
   ) => void
+  replaceEditableItems: (rows: Array<{ text: string; options?: string[] }>) => void
 }
 
 const seededItems = createInitialItems()
@@ -234,6 +235,31 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
           title: survey.title,
           surveyContext: survey.description ?? survey.construct_description ?? '',
         },
+      }
+    }),
+  replaceEditableItems: (rows) =>
+    set((state) => {
+      const sanitized = rows
+        .map((row) => ({
+          text: row.text.trim(),
+          options: normalizeOptions(row.options),
+        }))
+        .filter((row) => row.text.length > 0)
+
+      const items: SurveyItem[] =
+        sanitized.length > 0
+          ? sanitized.map((row) => ({
+              id: createId(),
+              text: row.text,
+              type: 'likert-5',
+              options: row.options,
+            }))
+          : createInitialItems()
+
+      return {
+        ...state,
+        items,
+        selectedItemId: items[0]?.id ?? null,
       }
     }),
 }))

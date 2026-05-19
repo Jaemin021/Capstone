@@ -766,3 +766,41 @@ export async function downloadSurveyResponseFeaturesCsv(surveyId: string): Promi
     data instanceof Blob ? data : new Blob([data], { type: 'text/csv;charset=utf-8' })
   triggerCsvDownload(blob, fileName)
 }
+
+export async function downloadSurveyItemEvaluationsCsv(surveyId: string): Promise<void> {
+  const fileName = `survey-${surveyId}-item-evaluations.csv`
+
+  if (useMockApi) {
+    const survey = await getSurvey(surveyId)
+    const header = [
+      'survey_id',
+      'item_id',
+      'item_order',
+      'item_role',
+      'question_text',
+      'options',
+    ]
+
+    const rows = survey.items.map((item) => [
+      surveyId,
+      item.item_id,
+      item.item_order,
+      item.item_role ?? '',
+      item.question_text ?? '',
+      item.options.map((option) => option.option_label).join(' | '),
+    ])
+
+    const csvText = [header.join(','), ...rows.map((row) => row.map(csvEscape).join(','))].join('\n')
+    const blob = new Blob([`\ufeff${csvText}`], { type: 'text/csv;charset=utf-8' })
+    triggerCsvDownload(blob, fileName)
+    return
+  }
+
+  const { data } = await http.get<Blob>(`/surveys/${surveyId}/item-evaluations.csv`, {
+    responseType: 'blob',
+  })
+
+  const blob =
+    data instanceof Blob ? data : new Blob([data], { type: 'text/csv;charset=utf-8' })
+  triggerCsvDownload(blob, fileName)
+}

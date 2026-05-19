@@ -38,6 +38,210 @@ type SaveSurveyResult = {
 }
 
 const emptyOptionValues = ['', '', '', '', '']
+type SpreadsheetImportRow = { text: string; options: string[] }
+type SpreadsheetImportResult = {
+  rows: SpreadsheetImportRow[]
+  title?: string
+  surveyContext?: string
+}
+
+function parseCsvLine(line: string) {
+  const cells: string[] = []
+  let current = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i]
+
+    if (char === '"') {
+      const next = line[i + 1]
+      if (inQuotes && next === '"') {
+        current += '"'
+        i += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+
+    if (char === ',' && !inQuotes) {
+      cells.push(current.trim())
+      current = ''
+      continue
+    }
+
+    current += char
+  }
+
+  cells.push(current.trim())
+  return cells
+}
+
+function splitSpreadsheetLine(line: string) {
+  if (line.includes('\t')) {
+    return line.split('\t').map((cell) => cell.trim())
+  }
+
+  return parseCsvLine(line)
+}
+
+function normalizeHeaderCell(value: string) {
+  return value.toLowerCase().replace(/\s+/g, '')
+}
+
+function isSpreadsheetHeader(columns: string[]) {
+  const hasQuestionLabel = columns.some((column) => {
+    const value = normalizeHeaderCell(column)
+    return (
+      value === '문항' ||
+      value === '문항텍스트' ||
+      value === 'question' ||
+      value === 'questiontext' ||
+      value.includes('문항') ||
+      value.includes('question')
+    )
+  })
+
+  const hasOptionLabel = columns.some((column) => {
+    const value = normalizeHeaderCell(column)
+    return value.includes('보기') || value.includes('option')
+  })
+
+  return hasQuestionLabel && hasOptionLabel
+}
+
+function detectQuestionColumnIndex(columns: string[]) {
+  for (let index = 0; index < columns.length; index += 1) {
+    const value = normalizeHeaderCell(columns[index] ?? '')
+    if (
+      value === '문항' ||
+      value === '문항텍스트' ||
+      value === 'question' ||
+      value === 'questiontext' ||
+      value.includes('문항') ||
+      value.includes('question')
+    ) {
+      return index
+    }
+  }
+
+  if (columns.length > 1) {
+    const first = normalizeHeaderCell(columns[0] ?? '')
+    if (first.includes('번호') || first.includes('no') || first.includes('num')) {
+      return 1
+    }
+  }
+
+  return 0
+}
+
+function detectOptionStartIndex(columns: string[], questionColumnIndex: number) {
+  for (let index = 0; index < columns.length; index += 1) {
+    const value = normalizeHeaderCell(columns[index] ?? '')
+    if (value.includes('보기') || value.includes('option')) {
+      return index
+    }
+  }
+
+  return questionColumnIndex + 1
+}
+
+function detectMetaValue(columns: string[], normalizedKey: string) {
+  if (columns.length === 1) {
+    return columns[0]?.trim() ?? ''
+  }
+
+  if (columns.length >= 2 && normalizedKey.length > 0) {
+    return columns.slice(1).join(' ').trim()
+  }
+
+  return ''
+}
+
+function parseSpreadsheetRows(rawText: string): SpreadsheetImportResult {
+  const lines = rawText
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+
+  if (lines.length === 0) {
+    return { rows: [] }
+  }
+
+  const parsedLines = lines.map((line) => splitSpreadsheetLine(line))
+  const titleKeys = new Set(['title', '설문제목', '제목'])
+  const contextKeys = new Set(['description', 'context', '설명', '설문설명', '맥락'])
+  let title: string | undefined
+  let surveyContext: string | undefined
+  let dataStartIndex = 0
+
+  for (let index = 0; index < Math.min(parsedLines.length, 4); index += 1) {
+    const columns = parsedLines[index]
+    const key = normalizeHeaderCell(columns[0] ?? '')
+    if (titleKeys.has(key)) {
+      const value = detectMetaValue(columns, key)
+      if (value) {
+        title = value
+      }
+      dataStartIndex = Math.max(dataStartIndex, index + 1)
+      continue
+    }
+
+    if (contextKeys.has(key)) {
+      const value = detectMetaValue(columns, key)
+      if (value) {
+        surveyContext = value
+      }
+      dataStartIndex = Math.max(dataStartIndex, index + 1)
+      continue
+    }
+  }
+
+  let headerIndex = -1
+  for (let index = dataStartIndex; index < parsedLines.length; index += 1) {
+    if (isSpreadsheetHeader(parsedLines[index])) {
+      headerIndex = index
+      break
+    }
+  }
+
+  let questionColumnIndex =
+    headerIndex >= 0 ? detectQuestionColumnIndex(parsedLines[headerIndex]) : 0
+  let optionStartIndex =
+    headerIndex >= 0
+      ? detectOptionStartIndex(parsedLines[headerIndex], questionColumnIndex)
+      : questionColumnIndex + 1
+  const rowStartIndex = headerIndex >= 0 ? headerIndex + 1 : dataStartIndex
+
+  if (headerIndex < 0 && parsedLines[rowStartIndex]) {
+    const firstRow = parsedLines[rowStartIndex]
+    const firstCell = (firstRow[0] ?? '').trim()
+    const secondCell = (firstRow[1] ?? '').trim()
+    if (/^\d+$/.test(firstCell) && secondCell.length > 0) {
+      questionColumnIndex = 1
+      optionStartIndex = 2
+    }
+  }
+  const rows: SpreadsheetImportRow[] = []
+
+  parsedLines.slice(rowStartIndex).forEach((columns) => {
+    const text = (columns[questionColumnIndex] ?? '').trim()
+    if (!text) {
+      return
+    }
+
+    const options = Array.from({ length: 5 }, (_, optionIndex) => {
+      const fromSheet = (columns[optionStartIndex + optionIndex] ?? '').trim()
+      return fromSheet || DEFAULT_LIKERT_5_OPTIONS[optionIndex] || ''
+    })
+
+    rows.push({ text, options })
+  })
+
+  return { rows, title, surveyContext }
+}
 
 function getApiErrorMessage(error: unknown, fallback: string) {
   if (typeof error !== 'object' || error === null) {
@@ -202,6 +406,8 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
   const [previewOpen, setPreviewOpen] = useState(false)
   const [createConfirmOpen, setCreateConfirmOpen] = useState(false)
   const [loadedSurveyId, setLoadedSurveyId] = useState<string | null>(null)
+  const [spreadsheetImportOpen, setSpreadsheetImportOpen] = useState(false)
+  const [spreadsheetText, setSpreadsheetText] = useState('')
 
   const {
     items,
@@ -216,6 +422,7 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
     setSettings,
     reorderItems,
     setItemsFromBackendSurvey,
+    replaceEditableItems,
   } = useSurveyStore()
 
   const editSurveyQuery = useQuery({
@@ -331,6 +538,34 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
     }
   }
 
+  const handleApplySpreadsheetImport = () => {
+    const imported = parseSpreadsheetRows(spreadsheetText)
+    const rows = imported.rows
+    if (rows.length === 0) {
+      pushToast({
+        type: 'error',
+        title: '엑셀 붙여넣기 실패',
+        description: '문항 행을 찾지 못했습니다. 문항 텍스트가 있는지 확인해 주세요.',
+      })
+      return
+    }
+
+    replaceEditableItems(rows)
+    if (imported.title || imported.surveyContext) {
+      setSettings({
+        title: imported.title ?? settings.title,
+        surveyContext: imported.surveyContext ?? settings.surveyContext,
+      })
+    }
+    setSpreadsheetImportOpen(false)
+    setSpreadsheetText('')
+    pushToast({
+      type: 'success',
+      title: '엑셀 문항 가져오기 완료',
+      description: `${rows.length}개 문항을 불러왔습니다.`,
+    })
+  }
+
   const pageTitle = isEditMode ? `설문지 수정${id ? ` #${id}` : ''}` : '설문지 생성'
   const hasExistingSurveyTarget = isEditMode ? Boolean(id) : Boolean(savedSurveyId)
   const primaryActionLabel = hasExistingSurveyTarget ? '설문 저장' : '설문 생성'
@@ -437,14 +672,23 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
               <h2 className="text-base font-black text-slate-950">문항 목록</h2>
               <p className="text-xs text-slate-500">드래그해서 문항 순서를 바꿀 수 있습니다.</p>
             </div>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800"
-              onClick={addItem}
-            >
-              <Plus size={16} />
-              추가
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                onClick={() => setSpreadsheetImportOpen(true)}
+              >
+                엑셀 붙여넣기
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800"
+                onClick={addItem}
+              >
+                <Plus size={16} />
+                추가
+              </button>
+            </div>
           </div>
 
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -549,6 +793,50 @@ export function SurveyEditorPage({ mode }: SurveyEditorPageProps) {
           )}
         </section>
       </section>
+
+      {spreadsheetImportOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4">
+          <section className="w-full max-w-3xl rounded-lg bg-white p-5 shadow-xl">
+            <h2 className="text-lg font-black text-slate-950">엑셀 문항 붙여넣기</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              엑셀에서 복사한 범위를 그대로 붙여넣으면 문항이 일괄 생성됩니다.
+              제목/설명도 아래 형식이면 자동으로 반영됩니다.
+            </p>
+            <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs leading-6 text-slate-700">
+              <p>예시 형식</p>
+              <p>제목,서비스 만족도 설문</p>
+              <p>설명,최근 1개월 사용 경험 기준</p>
+              <p>번호,문항,보기1,보기2,보기3,보기4,보기5</p>
+              <p>1,서비스가 편리하다,전혀 아니다,아니다,보통이다,그렇다,매우 그렇다</p>
+            </div>
+            <textarea
+              className="mt-3 min-h-64 w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm leading-6 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+              placeholder="엑셀에서 복사한 셀 범위를 붙여넣어 주세요."
+              value={spreadsheetText}
+              onChange={(event) => setSpreadsheetText(event.target.value)}
+            />
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                className="inline-flex flex-1 items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
+                onClick={handleApplySpreadsheetImport}
+              >
+                문항으로 불러오기
+              </button>
+              <button
+                type="button"
+                className="inline-flex flex-1 items-center justify-center rounded-md border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                onClick={() => {
+                  setSpreadsheetImportOpen(false)
+                  setSpreadsheetText('')
+                }}
+              >
+                취소
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {createConfirmOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4">

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { useLocation, useParams } from 'react-router-dom'
 import {
+  downloadSurveyItemEvaluationsCsv,
   downloadSurveyResponseFeaturesCsv,
   evaluateSurveyConstruct,
   evaluateSurveyQuality,
@@ -529,6 +530,7 @@ export function ResultsPage() {
   const [responseDetailsOpen, setResponseDetailsOpen] = useState(false)
   const [openQualityItemId, setOpenQualityItemId] = useState<string | null>(null)
   const [downloadingFeaturesCsv, setDownloadingFeaturesCsv] = useState(false)
+  const [downloadingItemEvaluationsCsv, setDownloadingItemEvaluationsCsv] = useState(false)
 
   const responseResult =
     (location.state as { responseResult?: SurveyResponseSubmitResult } | null)?.responseResult ??
@@ -707,6 +709,31 @@ export function ResultsPage() {
     }
   }
 
+  const handleDownloadItemEvaluationsCsv = async () => {
+    if (!id || id === 'demo') {
+      pushToast({
+        type: 'error',
+        title: 'CSV 다운로드 실패',
+        description: '유효한 설문 ID가 없습니다.',
+      })
+      return
+    }
+
+    setDownloadingItemEvaluationsCsv(true)
+    try {
+      await downloadSurveyItemEvaluationsCsv(id)
+      pushToast({ type: 'success', title: '문항 평가 feature CSV 다운로드 완료' })
+    } catch (error) {
+      pushToast({
+        type: 'error',
+        title: 'CSV 다운로드 실패',
+        description: getErrorMessage(error, 'CSV 생성 중 오류가 발생했습니다.'),
+      })
+    } finally {
+      setDownloadingItemEvaluationsCsv(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -749,7 +776,7 @@ export function ResultsPage() {
           {` (현재 누적 응답 ${reliabilityRespondentCount}명)`}
         </p>
 
-        <div className="mt-4">
+        <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
             className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400"
@@ -760,6 +787,18 @@ export function ResultsPage() {
               <LoadingSpinner compact label="CSV 생성 중" />
             ) : (
               '응답 feature CSV 다운로드'
+            )}
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400"
+            disabled={downloadingItemEvaluationsCsv || !id || id === 'demo'}
+            onClick={handleDownloadItemEvaluationsCsv}
+          >
+            {downloadingItemEvaluationsCsv ? (
+              <LoadingSpinner compact label="CSV 생성 중" />
+            ) : (
+              '문항 평가 feature CSV 다운로드'
             )}
           </button>
         </div>
