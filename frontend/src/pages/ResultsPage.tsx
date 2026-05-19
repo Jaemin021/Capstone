@@ -218,6 +218,90 @@ function formatRatio(value: unknown) {
   return `${(ratio * 100).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}%`
 }
 
+function parseItemCategoryTokens(value?: string | null) {
+  const raw = (value ?? '').trim()
+  if (!raw) {
+    return []
+  }
+
+  const unique: string[] = []
+  const seen = new Set<string>()
+
+  raw
+    .split('/')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+    .forEach((token) => {
+      const key = token.toLowerCase()
+      if (!seen.has(key)) {
+        seen.add(key)
+        unique.push(token)
+      }
+    })
+
+  return unique
+}
+
+function meanOrNull(sum: number, count: number) {
+  if (count <= 0) {
+    return null
+  }
+  return sum / count
+}
+
+function getConstructCombinedScore(item?: ConstructEvaluationItem) {
+  if (!item) {
+    return null
+  }
+
+  if (typeof item.combined_score === 'number' && Number.isFinite(item.combined_score)) {
+    return item.combined_score
+  }
+
+  if (
+    typeof item.embedding_score === 'number' &&
+    Number.isFinite(item.embedding_score) &&
+    typeof item.llm_score === 'number' &&
+    Number.isFinite(item.llm_score)
+  ) {
+    return item.embedding_score * 0.4 + item.llm_score * 0.6
+  }
+
+  return null
+}
+
+type ItemFeatureSnapshot = {
+  item_id: string
+  item_order: number
+  question_text: string
+  item_category: string
+  category_tokens: string[]
+  quality_score: number | null
+  quality_status: EvaluationStatus
+  quality_problem_categories: string[]
+  quality_detected_terms: string[]
+  construct_embedding_score: number | null
+  construct_llm_score: number | null
+  construct_combined_score: number | null
+  construct_status: EvaluationStatus
+  construct_predicted_citc: number | null
+  construct_predicted_alpha_impact: number | null
+  construct_embedding_features: Record<string, unknown> | null
+  construct_llm_features: Record<string, unknown> | null
+  statistics_item_citc: number | null
+  statistics_item_citc_status: EvaluationStatus
+  statistics_alpha_if_item_deleted: number | null
+}
+
+type CategoryFeatureSummary = {
+  category: string
+  item_count: number
+  quality_avg: number | null
+  construct_avg: number | null
+  citc_avg: number | null
+  alpha_if_deleted_avg: number | null
+}
+
 function ResponseFeatureDetails({ features }: { features?: CompactResponseFeatures }) {
   if (!features) {
     return (
@@ -522,6 +606,198 @@ function ReliabilityDistributionPanel({ data }: { data?: SurveyReliabilityRespon
   )
 }
 
+function CategoryFeaturePanel({ rows }: { rows: CategoryFeatureSummary[] }) {
+  if (rows.length === 0) {
+    return (
+      <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+        유형별로 집계할 일반 문항이 아직 없습니다.
+      </p>
+    )
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[760px] border-separate border-spacing-0 text-left text-sm">
+        <thead>
+          <tr className="text-xs font-black uppercase text-slate-500">
+            <th className="border-b border-slate-200 px-3 py-2">유형</th>
+            <th className="border-b border-slate-200 px-3 py-2">문항 수</th>
+            <th className="border-b border-slate-200 px-3 py-2">품질 평균</th>
+            <th className="border-b border-slate-200 px-3 py-2">구성 평균</th>
+            <th className="border-b border-slate-200 px-3 py-2">CITC 평균</th>
+            <th className="border-b border-slate-200 px-3 py-2">alpha(문항 제거 시) 평균</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.category} className="hover:bg-slate-50">
+              <td className="border-b border-slate-100 px-3 py-3 font-semibold text-slate-800">
+                {row.category}
+              </td>
+              <td className="border-b border-slate-100 px-3 py-3">{row.item_count}</td>
+              <td className="border-b border-slate-100 px-3 py-3">
+                {row.quality_avg == null ? '-' : row.quality_avg.toFixed(2)}
+              </td>
+              <td className="border-b border-slate-100 px-3 py-3">
+                {row.construct_avg == null ? '-' : row.construct_avg.toFixed(2)}
+              </td>
+              <td className="border-b border-slate-100 px-3 py-3">
+                {row.citc_avg == null ? '-' : row.citc_avg.toFixed(3)}
+              </td>
+              <td className="border-b border-slate-100 px-3 py-3">
+                {row.alpha_if_deleted_avg == null ? '-' : row.alpha_if_deleted_avg.toFixed(3)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ItemFeaturePanel({ rows }: { rows: ItemFeatureSnapshot[] }) {
+  if (rows.length === 0) {
+    return (
+      <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+        문항별 feature를 표시할 일반 문항이 아직 없습니다.
+      </p>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {rows.map((row) => (
+        <details key={row.item_id} className="rounded-lg border border-slate-200 bg-white p-4">
+          <summary className="cursor-pointer list-none">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm font-black text-slate-900">Q{row.item_order}</p>
+                <p className="mt-1 text-sm text-slate-700">{row.question_text}</p>
+                <p className="mt-1 text-xs font-semibold text-indigo-700">
+                  유형: {row.item_category || '(미분류)'}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">
+                  품질 {row.quality_score == null ? '-' : row.quality_score.toFixed(2)}
+                </span>
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">
+                  구성 {row.construct_combined_score == null ? '-' : row.construct_combined_score.toFixed(2)}
+                </span>
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">
+                  CITC {row.statistics_item_citc == null ? '-' : row.statistics_item_citc.toFixed(3)}
+                </span>
+              </div>
+            </div>
+          </summary>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <article className="rounded-lg bg-slate-50 p-3">
+              <h4 className="text-xs font-black uppercase text-slate-600">품질 Feature</h4>
+              <dl className="mt-2 space-y-1 text-sm text-slate-700">
+                <div className="flex justify-between gap-2">
+                  <dt>점수</dt>
+                  <dd>{row.quality_score == null ? '-' : row.quality_score.toFixed(2)}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt>상태</dt>
+                  <dd>{row.quality_status}</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold">문제 카테고리</dt>
+                  <dd className="mt-1">
+                    {row.quality_problem_categories.length > 0
+                      ? row.quality_problem_categories.join(', ')
+                      : '-'}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-semibold">감지 표현</dt>
+                  <dd className="mt-1">
+                    {row.quality_detected_terms.length > 0
+                      ? row.quality_detected_terms.join(', ')
+                      : '-'}
+                  </dd>
+                </div>
+              </dl>
+            </article>
+
+            <article className="rounded-lg bg-slate-50 p-3">
+              <h4 className="text-xs font-black uppercase text-slate-600">구성 Feature</h4>
+              <dl className="mt-2 space-y-1 text-sm text-slate-700">
+                <div className="flex justify-between gap-2">
+                  <dt>Embedding</dt>
+                  <dd>{row.construct_embedding_score == null ? '-' : row.construct_embedding_score.toFixed(3)}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt>LLM</dt>
+                  <dd>{row.construct_llm_score == null ? '-' : row.construct_llm_score.toFixed(3)}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt>Combined</dt>
+                  <dd>{row.construct_combined_score == null ? '-' : row.construct_combined_score.toFixed(3)}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt>예측 CITC</dt>
+                  <dd>{row.construct_predicted_citc == null ? '-' : row.construct_predicted_citc.toFixed(3)}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt>예측 Alpha 영향</dt>
+                  <dd>
+                    {row.construct_predicted_alpha_impact == null
+                      ? '-'
+                      : row.construct_predicted_alpha_impact.toFixed(3)}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt>상태</dt>
+                  <dd>{row.construct_status}</dd>
+                </div>
+              </dl>
+            </article>
+
+            <article className="rounded-lg bg-slate-50 p-3">
+              <h4 className="text-xs font-black uppercase text-slate-600">통계 Feature</h4>
+              <dl className="mt-2 space-y-1 text-sm text-slate-700">
+                <div className="flex justify-between gap-2">
+                  <dt>CITC</dt>
+                  <dd>{row.statistics_item_citc == null ? '-' : row.statistics_item_citc.toFixed(3)}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt>CITC 상태</dt>
+                  <dd>{row.statistics_item_citc_status}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt>문항 제거 시 alpha</dt>
+                  <dd>
+                    {row.statistics_alpha_if_item_deleted == null
+                      ? '-'
+                      : row.statistics_alpha_if_item_deleted.toFixed(3)}
+                  </dd>
+                </div>
+              </dl>
+            </article>
+          </div>
+
+          <details className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
+            <summary className="cursor-pointer font-bold">원본 feature JSON 보기</summary>
+            <pre className="mt-2 overflow-auto rounded-md bg-slate-900 p-3 text-[11px] text-slate-100">
+{JSON.stringify(
+  {
+    construct_embedding_features: row.construct_embedding_features,
+    construct_llm_features: row.construct_llm_features,
+  },
+  null,
+  2,
+)}
+            </pre>
+          </details>
+        </details>
+      ))}
+    </div>
+  )
+}
+
 export function ResultsPage() {
   const { id = 'demo' } = useParams()
   const location = useLocation()
@@ -638,9 +914,18 @@ export function ResultsPage() {
   const qualityResults = qualityQuery.data?.results ?? []
   const constructResults = constructQuery.data?.results ?? []
   const surveyItems = surveyQuery.data?.items ?? []
+  const statisticsItems = statisticsQuery.data?.items ?? []
   const qualityResultMap = useMemo(
     () => new Map(qualityResults.map((item) => [item.item_id, item])),
     [qualityResults],
+  )
+  const constructResultMap = useMemo(
+    () => new Map(constructResults.map((item) => [item.item_id, item])),
+    [constructResults],
+  )
+  const statisticsResultMap = useMemo(
+    () => new Map(statisticsItems.map((item) => [item.item_id, item])),
+    [statisticsItems],
   )
 
   const qualityDisplayItems: QualityDisplayItem[] = useMemo(
@@ -678,6 +963,108 @@ export function ResultsPage() {
   const problemQualityCount = evaluationTargetItems.filter(
     (item) => item.status === 'warning' || item.status === 'bad',
   ).length
+
+  const normalSurveyItems = useMemo(
+    () => surveyItems.filter((item) => item.item_role === 'normal'),
+    [surveyItems],
+  )
+
+  const itemFeatureRows = useMemo<ItemFeatureSnapshot[]>(() => {
+    return normalSurveyItems.map((surveyItem) => {
+      const quality = qualityResultMap.get(surveyItem.item_id)
+      const construct = constructResultMap.get(surveyItem.item_id)
+      const statistics = statisticsResultMap.get(surveyItem.item_id)
+      const combinedScore = getConstructCombinedScore(construct)
+
+      return {
+        item_id: surveyItem.item_id,
+        item_order: surveyItem.item_order,
+        question_text: surveyItem.question_text,
+        item_category: surveyItem.item_category?.trim() ?? '',
+        category_tokens: parseItemCategoryTokens(surveyItem.item_category),
+        quality_score: quality?.quality_score ?? null,
+        quality_status: quality?.status ?? 'unknown',
+        quality_problem_categories: quality?.problem_categories ?? [],
+        quality_detected_terms: quality?.detected_terms ?? [],
+        construct_embedding_score: construct?.embedding_score ?? null,
+        construct_llm_score: construct?.llm_score ?? null,
+        construct_combined_score: combinedScore,
+        construct_status: construct?.status ?? 'unknown',
+        construct_predicted_citc: construct?.predicted_citc ?? null,
+        construct_predicted_alpha_impact: construct?.predicted_alpha_impact ?? null,
+        construct_embedding_features: construct?.embedding_features ?? null,
+        construct_llm_features: construct?.llm_features ?? null,
+        statistics_item_citc: statistics?.citc ?? null,
+        statistics_item_citc_status: statistics?.citc_status ?? 'unknown',
+        statistics_alpha_if_item_deleted: statistics?.alpha_if_item_deleted ?? null,
+      }
+    })
+  }, [constructResultMap, normalSurveyItems, qualityResultMap, statisticsResultMap])
+
+  const categoryFeatureSummaries = useMemo<CategoryFeatureSummary[]>(() => {
+    const grouped = new Map<
+      string,
+      {
+        itemCount: number
+        qualitySum: number
+        qualityCount: number
+        constructSum: number
+        constructCount: number
+        citcSum: number
+        citcCount: number
+        alphaIfDeletedSum: number
+        alphaIfDeletedCount: number
+      }
+    >()
+
+    itemFeatureRows.forEach((row) => {
+      const categories = row.category_tokens.length > 0 ? row.category_tokens : ['(미분류)']
+      categories.forEach((category) => {
+        const stats = grouped.get(category) ?? {
+          itemCount: 0,
+          qualitySum: 0,
+          qualityCount: 0,
+          constructSum: 0,
+          constructCount: 0,
+          citcSum: 0,
+          citcCount: 0,
+          alphaIfDeletedSum: 0,
+          alphaIfDeletedCount: 0,
+        }
+
+        stats.itemCount += 1
+        if (row.quality_score != null) {
+          stats.qualitySum += row.quality_score
+          stats.qualityCount += 1
+        }
+        if (row.construct_combined_score != null) {
+          stats.constructSum += row.construct_combined_score
+          stats.constructCount += 1
+        }
+        if (row.statistics_item_citc != null) {
+          stats.citcSum += row.statistics_item_citc
+          stats.citcCount += 1
+        }
+        if (row.statistics_alpha_if_item_deleted != null) {
+          stats.alphaIfDeletedSum += row.statistics_alpha_if_item_deleted
+          stats.alphaIfDeletedCount += 1
+        }
+
+        grouped.set(category, stats)
+      })
+    })
+
+    return Array.from(grouped.entries())
+      .map(([category, stats]) => ({
+        category,
+        item_count: stats.itemCount,
+        quality_avg: meanOrNull(stats.qualitySum, stats.qualityCount),
+        construct_avg: meanOrNull(stats.constructSum, stats.constructCount),
+        citc_avg: meanOrNull(stats.citcSum, stats.citcCount),
+        alpha_if_deleted_avg: meanOrNull(stats.alphaIfDeletedSum, stats.alphaIfDeletedCount),
+      }))
+      .sort((a, b) => b.item_count - a.item_count || a.category.localeCompare(b.category, 'ko'))
+  }, [itemFeatureRows])
 
   const responseScore = responseResult?.reliability?.score ?? responseResult?.features.reliability_score
   const responseStatus =
@@ -907,6 +1294,26 @@ export function ResultsPage() {
               저장된 구성 타당도 평가 결과가 없습니다.
             </p>
           )}
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-lg font-black text-slate-950">유형별 Feature 요약</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          문항의 `유형` 값을 `/`로 분리해 집계하며, 중복 유형은 자동 제거됩니다.
+        </p>
+        <div className="mt-4">
+          <CategoryFeaturePanel rows={categoryFeatureSummaries} />
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-lg font-black text-slate-950">문항별 Feature 상세</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          문항마다 품질/구성/통계 feature를 한 번에 확인할 수 있습니다.
+        </p>
+        <div className="mt-4">
+          <ItemFeaturePanel rows={itemFeatureRows} />
         </div>
       </section>
 

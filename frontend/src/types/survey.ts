@@ -19,6 +19,7 @@ export interface SurveyItem {
   id: string
   backendItemId?: string
   text: string
+  itemCategory?: string
   type: QuestionType
   options: string[]
   backendOptions?: BackendSurveyItemOption[]
@@ -115,6 +116,7 @@ export interface BackendSurveyItemOptionCreate {
 export interface BackendSurveyItemCreate {
   item_order: number
   question_text: string
+  item_category?: string | null
   question_type: BackendQuestionType
   is_required: boolean
   options: BackendSurveyItemOptionCreate[]
@@ -142,6 +144,7 @@ export interface BackendSurveyItem {
   item_id: string
   item_order: number
   question_text: string
+  item_category?: string | null
   question_type: BackendQuestionType
   item_role: 'normal' | 'reverse' | 'trap' | string
   is_generated: boolean

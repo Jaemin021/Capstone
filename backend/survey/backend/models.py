@@ -56,6 +56,7 @@ class SurveyItem(Base):
 
     item_order = Column(Integer, nullable=False)
     question_text = Column(String, nullable=False)
+    item_category = Column(String, nullable=True)
 
     # 기본은 5점 리커트
     question_type = Column(String, default="likert_5")

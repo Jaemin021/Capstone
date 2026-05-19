@@ -66,6 +66,7 @@ function buildMockSurvey(payload: BackendSurveyCreatePayload): BackendSurveyResp
       item_id: itemId,
       item_order: index + 1,
       question_text: item.question_text,
+      item_category: item.item_category ?? null,
       question_type: item.question_type,
       item_role: 'normal',
       is_generated: false,
@@ -171,6 +172,7 @@ export async function updateSurvey(
         item_id: itemId,
         item_order: index + 1,
         question_text: item.question_text,
+        item_category: item.item_category ?? null,
         question_type: item.question_type,
         item_role: 'normal',
         is_generated: false,
@@ -777,6 +779,7 @@ export async function downloadSurveyItemEvaluationsCsv(surveyId: string): Promis
       'item_id',
       'item_order',
       'item_role',
+      'item_category',
       'question_text',
       'options',
     ]
@@ -786,6 +789,7 @@ export async function downloadSurveyItemEvaluationsCsv(surveyId: string): Promis
       item.item_id,
       item.item_order,
       item.item_role ?? '',
+      item.item_category ?? '',
       item.question_text ?? '',
       item.options.map((option) => option.option_label).join(' | '),
     ])

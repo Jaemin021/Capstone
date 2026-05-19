@@ -12,6 +12,7 @@ class SurveyItemOptionCreate(BaseModel):
 class SurveyItemCreate(BaseModel):
     item_order: int
     question_text: str
+    item_category: Optional[str] = None
 
     # 기본은 5점 리커트
     question_type: str = "likert_5"

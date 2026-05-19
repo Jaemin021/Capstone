@@ -1,5 +1,7 @@
 # backend/routers/survey_evaluations.py
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import re
 from fastapi import APIRouter
@@ -66,6 +68,82 @@ def build_fallback_rewrite(question_text, problem_categories):
     return proposal
 
 
+def _parse_quality_worker_count():
+    raw = os.getenv("QUALITY_LLM_MAX_WORKERS", "6").strip()
+    try:
+        parsed = int(raw)
+    except Exception:
+        return 6
+    return max(1, min(parsed, 12))
+
+
+def _evaluate_single_quality_item(survey_id: str, item_snapshot: dict):
+    question_text = item_snapshot["question_text"]
+    llm_result = None
+    llm_error = None
+
+    try:
+        llm_result = evaluate_item_with_llm(
+            question_text,
+            item_snapshot["option_texts"]
+        )
+    except Exception as error:
+        llm_error = repr(error)
+
+    score = calculate_quality_score(llm_result)
+    problem_categories = llm_result.get("problem_categories") if isinstance(llm_result, dict) else None
+    detected_terms = llm_result.get("detected_terms") if isinstance(llm_result, dict) else None
+    llm_comment = llm_result.get("llm_comment") if isinstance(llm_result, dict) else None
+    suggested_rewrite = llm_result.get("suggested_rewrite") if isinstance(llm_result, dict) else None
+    status = score_status(score)
+
+    if status in ["warning", "bad"] and not _has_text(suggested_rewrite):
+        suggested_rewrite = build_fallback_rewrite(
+            question_text=question_text,
+            problem_categories=problem_categories,
+        )
+
+    if not _can_show_suggested_rewrite(score):
+        suggested_rewrite = ""
+
+    eval_row = {
+        "survey_id": survey_id,
+        "item_id": item_snapshot["item_id"],
+        "quality_score": score,
+        "problem_categories": problem_categories,
+        "detected_terms": detected_terms,
+        "llm_comment": llm_comment,
+        "suggested_rewrite": suggested_rewrite,
+        "created_at": now_str(),
+    }
+    result_row = {
+        "item_id": item_snapshot["item_id"],
+        "item_order": item_snapshot["item_order"],
+        "question_text": question_text,
+        "quality_score": score,
+        "status": status,
+        "problem_categories": problem_categories,
+        "detected_terms": detected_terms,
+        "llm_comment": llm_comment,
+        "suggested_rewrite": suggested_rewrite,
+        "llm_error": llm_error
+    }
+    debug_error = None
+    if llm_error:
+        debug_error = {
+            "item_id": item_snapshot["item_id"],
+            "item_order": item_snapshot["item_order"],
+            "error": llm_error
+        }
+
+    return {
+        "item_order": item_snapshot["item_order"],
+        "result_row": result_row,
+        "eval_row": eval_row,
+        "debug_error": debug_error,
+    }
+
+
 def _evaluate_quality_without_long_db_lock(survey_id: str):
     db = SessionLocal()
 
@@ -96,65 +174,25 @@ def _evaluate_quality_without_long_db_lock(survey_id: str):
     eval_rows = []
     debug_errors = []
 
-    for item in item_snapshots:
-        question_text = item["question_text"]
+    max_workers = _parse_quality_worker_count()
+    worker_results = []
 
-        llm_result = None
-        llm_error = None
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(_evaluate_single_quality_item, survey_id, item_snapshot)
+            for item_snapshot in item_snapshots
+        ]
 
-        try:
-            llm_result = evaluate_item_with_llm(
-                question_text,
-                item["option_texts"]
-            )
-        except Exception as e:
-            llm_error = repr(e)
-            debug_errors.append({
-                "item_id": item["item_id"],
-                "item_order": item["item_order"],
-                "error": llm_error
-            })
+        for future in futures:
+            worker_results.append(future.result())
 
-        score = calculate_quality_score(llm_result)
-        problem_categories = llm_result.get("problem_categories") if isinstance(llm_result, dict) else None
-        detected_terms = llm_result.get("detected_terms") if isinstance(llm_result, dict) else None
-        llm_comment = llm_result.get("llm_comment") if isinstance(llm_result, dict) else None
-        suggested_rewrite = llm_result.get("suggested_rewrite") if isinstance(llm_result, dict) else None
+    worker_results.sort(key=lambda row: row["item_order"])
 
-        status = score_status(score)
-
-        if status in ["warning", "bad"] and not _has_text(suggested_rewrite):
-            suggested_rewrite = build_fallback_rewrite(
-                question_text=question_text,
-                problem_categories=problem_categories,
-            )
-
-        if not _can_show_suggested_rewrite(score):
-            suggested_rewrite = ""
-
-        eval_rows.append({
-            "survey_id": survey_id,
-            "item_id": item["item_id"],
-            "quality_score": score,
-            "problem_categories": problem_categories,
-            "detected_terms": detected_terms,
-            "llm_comment": llm_comment,
-            "suggested_rewrite": suggested_rewrite,
-            "created_at": now_str(),
-        })
-
-        results.append({
-            "item_id": item["item_id"],
-            "item_order": item["item_order"],
-            "question_text": question_text,
-            "quality_score": score,
-            "status": status,
-            "problem_categories": problem_categories,
-            "detected_terms": detected_terms,
-            "llm_comment": llm_comment,
-            "suggested_rewrite": suggested_rewrite,
-            "llm_error": llm_error
-        })
+    for worker_row in worker_results:
+        results.append(worker_row["result_row"])
+        eval_rows.append(worker_row["eval_row"])
+        if worker_row["debug_error"] is not None:
+            debug_errors.append(worker_row["debug_error"])
 
     db = SessionLocal()
 

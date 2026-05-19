@@ -63,6 +63,32 @@ def _score_status(score, good=8.0, warning=6.0):
     return "bad"
 
 
+def normalize_item_category(value):
+    if value is None:
+        return None
+
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    tokens = []
+    seen = set()
+    for token in raw.split("/"):
+        normalized = token.strip()
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        tokens.append(normalized)
+
+    if not tokens:
+        return None
+
+    return " / ".join(tokens)
+
+
 def get_survey_by_access_key(db, access_key: str):
     return db.query(models.Survey).filter_by(
         external_survey_key=access_key
@@ -111,6 +137,7 @@ def build_survey_response(db, survey):
             "item_id": item.item_id,
             "item_order": item.item_order,
             "question_text": item.question_text,
+            "item_category": item.item_category,
             "question_type": item.question_type,
             "item_role": item.item_role,
             "is_generated": item.is_generated,
@@ -369,6 +396,7 @@ def create_survey(survey: schemas.SurveyCreate):
             survey_id=survey_id,
             item_order=item.item_order,
             question_text=item.question_text,
+            item_category=normalize_item_category(item.item_category),
             question_type=item.question_type,
             is_required=item.is_required,
             item_role="normal",
@@ -406,6 +434,7 @@ def create_survey(survey: schemas.SurveyCreate):
             "item_id": db_item.item_id,
             "item_order": db_item.item_order,
             "question_text": db_item.question_text,
+            "item_category": db_item.item_category,
             "question_type": db_item.question_type,
             "item_role": "normal",
             "is_generated": False,
@@ -456,6 +485,7 @@ def create_survey(survey: schemas.SurveyCreate):
                 survey_id=survey_id,
                 item_order=next_order,
                 question_text=rev["question_text"],
+                item_category=source.get("item_category"),
                 question_type="likert_5",
                 is_required=True,
                 item_role="reverse",
@@ -492,6 +522,7 @@ def create_survey(survey: schemas.SurveyCreate):
                 "item_id": db_item.item_id,
                 "item_order": db_item.item_order,
                 "question_text": db_item.question_text,
+                "item_category": db_item.item_category,
                 "question_type": db_item.question_type,
                 "item_role": db_item.item_role,
                 "is_generated": db_item.is_generated,
@@ -533,6 +564,7 @@ def create_survey(survey: schemas.SurveyCreate):
                 survey_id=survey_id,
                 item_order=next_order,
                 question_text=question_text,
+                item_category=base_item.get("item_category"),
                 question_type="likert_5",
                 is_required=True,
                 item_role="trap",
@@ -569,6 +601,7 @@ def create_survey(survey: schemas.SurveyCreate):
                 "item_id": db_item.item_id,
                 "item_order": db_item.item_order,
                 "question_text": db_item.question_text,
+                "item_category": db_item.item_category,
                 "question_type": db_item.question_type,
                 "item_role": db_item.item_role,
                 "is_generated": db_item.is_generated,
@@ -710,6 +743,7 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
                 survey_id=survey_id,
                 item_order=item.item_order,
                 question_text=item.question_text,
+                item_category=normalize_item_category(item.item_category),
                 question_type=item.question_type,
                 is_required=item.is_required,
                 item_role="normal",
@@ -747,6 +781,7 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
                 "item_id": db_item.item_id,
                 "item_order": db_item.item_order,
                 "question_text": db_item.question_text,
+                "item_category": db_item.item_category,
                 "question_type": db_item.question_type,
                 "item_role": "normal",
                 "is_generated": False,
@@ -790,6 +825,7 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
                     survey_id=survey_id,
                     item_order=next_order,
                     question_text=rev["question_text"],
+                    item_category=source.get("item_category"),
                     question_type="likert_5",
                     is_required=True,
                     item_role="reverse",
@@ -826,6 +862,7 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
                     "item_id": db_item.item_id,
                     "item_order": db_item.item_order,
                     "question_text": db_item.question_text,
+                    "item_category": db_item.item_category,
                     "question_type": db_item.question_type,
                     "item_role": db_item.item_role,
                     "is_generated": db_item.is_generated,
@@ -865,6 +902,7 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
                     survey_id=survey_id,
                     item_order=next_order,
                     question_text=question_text,
+                    item_category=base_item.get("item_category"),
                     question_type="likert_5",
                     is_required=True,
                     item_role="trap",
@@ -901,6 +939,7 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
                     "item_id": db_item.item_id,
                     "item_order": db_item.item_order,
                     "question_text": db_item.question_text,
+                    "item_category": db_item.item_category,
                     "question_type": db_item.question_type,
                     "item_role": db_item.item_role,
                     "is_generated": db_item.is_generated,
@@ -1454,6 +1493,7 @@ def download_survey_item_evaluations_csv(survey_id: str):
             "item_role",
             "is_generated",
             "source_item_id",
+            "item_category",
             "question_text",
             "options_json",
             "quality_score",
@@ -1518,6 +1558,7 @@ def download_survey_item_evaluations_csv(survey_id: str):
                 item.item_role or "",
                 bool(item.is_generated),
                 item.source_item_id or "",
+                item.item_category or "",
                 item.question_text or "",
                 _json_text(options_map.get(item.item_id, [])),
                 _safe_float_or_empty(quality_score),
