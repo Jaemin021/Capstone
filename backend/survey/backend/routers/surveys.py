@@ -646,6 +646,106 @@ def create_survey(survey: schemas.SurveyCreate):
     return result
 
 
+@router.post("/{survey_id}/duplicate")
+def duplicate_survey(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        source_survey = db.query(models.Survey).filter_by(survey_id=survey_id).first()
+        if source_survey is None:
+            raise HTTPException(status_code=404, detail="survey not found")
+
+        copied_title = f"{source_survey.title} (복사본)"
+        copied_survey = models.Survey(
+            title=copied_title,
+            description=source_survey.description,
+            construct_name=source_survey.construct_name,
+            construct_description=source_survey.construct_description,
+            status="draft",
+        )
+        db.add(copied_survey)
+        db.commit()
+        db.refresh(copied_survey)
+
+        source_items = db.query(models.SurveyItem).filter_by(
+            survey_id=survey_id
+        ).order_by(models.SurveyItem.item_order.asc()).all()
+
+        source_options_by_item = {}
+        if source_items:
+            source_item_ids = [item.item_id for item in source_items]
+            source_options = db.query(models.SurveyItemOption).filter(
+                models.SurveyItemOption.item_id.in_(source_item_ids)
+            ).order_by(
+                models.SurveyItemOption.item_id.asc(),
+                models.SurveyItemOption.option_order.asc(),
+            ).all()
+
+            for option in source_options:
+                source_options_by_item.setdefault(option.item_id, []).append(option)
+
+        item_id_map = {}
+        copied_items_by_source = {}
+
+        # 1) 문항 자체를 먼저 모두 복사
+        for source_item in source_items:
+            copied_item = models.SurveyItem(
+                survey_id=copied_survey.survey_id,
+                item_order=source_item.item_order,
+                question_text=source_item.question_text,
+                item_category=normalize_item_category(source_item.item_category),
+                question_type=source_item.question_type,
+                is_required=source_item.is_required,
+                item_role=source_item.item_role,
+                is_generated=source_item.is_generated,
+                source_item_id=None,
+                trap_correct_option_order=source_item.trap_correct_option_order,
+                reverse_expected_rule=source_item.reverse_expected_rule,
+            )
+            db.add(copied_item)
+            db.flush()
+
+            item_id_map[source_item.item_id] = copied_item.item_id
+            copied_items_by_source[source_item.item_id] = copied_item
+
+        # 2) 역문항 source_item_id 참조를 새 item_id로 연결
+        for source_item in source_items:
+            if source_item.source_item_id is None:
+                continue
+
+            copied_item = copied_items_by_source.get(source_item.item_id)
+            mapped_source_item_id = item_id_map.get(source_item.source_item_id)
+
+            if copied_item is not None:
+                copied_item.source_item_id = mapped_source_item_id
+
+        # 3) 보기 복사
+        for source_item in source_items:
+            copied_item = copied_items_by_source.get(source_item.item_id)
+            if copied_item is None:
+                continue
+
+            for source_option in source_options_by_item.get(source_item.item_id, []):
+                copied_option = models.SurveyItemOption(
+                    item_id=copied_item.item_id,
+                    option_order=source_option.option_order,
+                    option_label=source_option.option_label,
+                    option_score=source_option.option_score,
+                )
+                db.add(copied_option)
+
+        db.commit()
+        db.refresh(copied_survey)
+
+        result = build_survey_response(db, copied_survey)
+        result["message"] = "survey duplicated"
+        result["source_survey_id"] = source_survey.survey_id
+        return result
+
+    finally:
+        db.close()
+
+
 def reorder_validation_items(created_items):
     original_items = [
         item for item in created_items

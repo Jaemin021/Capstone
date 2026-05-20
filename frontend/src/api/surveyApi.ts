@@ -153,6 +153,56 @@ export async function createSurvey(
   return data
 }
 
+export async function duplicateSurvey(surveyId: string): Promise<BackendSurveyResponse> {
+  if (useMockApi) {
+    const raw = window.localStorage.getItem(getMockSurveyStorageKey(surveyId))
+    if (!raw) {
+      throw new Error('Mock survey not found')
+    }
+
+    const source = JSON.parse(raw) as BackendSurveyResponse
+    const nextSurveyId = createMockId('survey')
+    const itemIdMap = new Map<string, string>()
+
+    const copiedItems = source.items
+      .slice()
+      .sort((a, b) => a.item_order - b.item_order)
+      .map((item) => {
+        const copiedItemId = createMockId('item')
+        itemIdMap.set(item.item_id, copiedItemId)
+
+        return {
+          ...item,
+          item_id: copiedItemId,
+          source_item_id: item.source_item_id,
+          options: item.options.map((option) => ({
+            ...option,
+            option_id: `${copiedItemId}-option-${option.option_order}`,
+          })),
+        }
+      })
+      .map((item) => ({
+        ...item,
+        source_item_id: item.source_item_id ? itemIdMap.get(item.source_item_id) ?? null : null,
+      }))
+
+    const copied: BackendSurveyResponse = {
+      ...source,
+      survey_id: nextSurveyId,
+      title: `${source.title} (복사본)`,
+      status: 'draft',
+      items: copiedItems,
+      message: 'mock survey duplicated',
+    }
+
+    window.localStorage.setItem(getMockSurveyStorageKey(nextSurveyId), JSON.stringify(copied))
+    return copied
+  }
+
+  const { data } = await http.post<BackendSurveyResponse>(`/surveys/${surveyId}/duplicate`)
+  return data
+}
+
 export async function updateSurvey(
   surveyId: string,
   payload: BackendSurveyUpdatePayload,
