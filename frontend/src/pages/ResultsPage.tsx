@@ -976,6 +976,38 @@ export function ResultsPage() {
     [surveyItems],
   )
 
+  const constructDisplayItems: ConstructEvaluationItem[] = useMemo(
+    () =>
+      normalSurveyItems.map((surveyItem) => {
+        const construct = constructResultMap.get(surveyItem.item_id)
+        if (construct) {
+          return construct
+        }
+
+        return {
+          item_id: surveyItem.item_id,
+          item_order: surveyItem.item_order,
+          question_text: surveyItem.question_text,
+          embedding_features: null,
+          embedding_score: null,
+          llm_features: null,
+          llm_score: null,
+          combined_score: null,
+          status: 'unknown',
+          predicted_citc: null,
+          predicted_alpha_impact: null,
+          created_at: null,
+        }
+      }),
+    [constructResultMap, normalSurveyItems],
+  )
+  const evaluatedConstructCount = constructDisplayItems.filter((item) => {
+    if (item.combined_score != null) {
+      return true
+    }
+    return item.embedding_score != null || item.llm_score != null
+  }).length
+
   const itemFeatureRows = useMemo<ItemFeatureSnapshot[]>(() => {
     return normalSurveyItems.map((surveyItem) => {
       const quality = qualityResultMap.get(surveyItem.item_id)
@@ -1305,14 +1337,18 @@ export function ResultsPage() {
           <DetailButton
             open={constructRowsOpen}
             onClick={() => setConstructRowsOpen((open) => !open)}
-            label={`문항 목록 보기 (${constructResults.length}개)`}
+            label={`문항 목록 보기 (${constructDisplayItems.length}개)`}
           />
         </div>
 
+        <p className="mb-4 text-sm font-bold text-slate-600">
+          평가 대상 문항: {normalSurveyItems.length}개 / 평가 완료: {evaluatedConstructCount}개
+        </p>
+
         {constructRowsOpen ? (
           <div className="space-y-3">
-            {constructResults.length > 0 ? (
-              constructResults.map((item) => (
+            {constructDisplayItems.length > 0 ? (
+              constructDisplayItems.map((item) => (
                 <ConstructRow key={item.item_id} item={item} />
               ))
             ) : (

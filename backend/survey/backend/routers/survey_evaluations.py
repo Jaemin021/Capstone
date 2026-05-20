@@ -300,7 +300,7 @@ def get_construct_results(survey_id: str):
         rows = db.query(
             models.SurveyItem,
             models.ConstructEvaluation
-        ).join(
+        ).outerjoin(
             models.ConstructEvaluation,
             models.SurveyItem.item_id == models.ConstructEvaluation.item_id
         ).filter(
@@ -314,7 +314,11 @@ def get_construct_results(survey_id: str):
 
         for item, eval_row in rows:
             combined_score = None
-            if eval_row.embedding_score is not None and eval_row.llm_score is not None:
+            if (
+                eval_row is not None
+                and eval_row.embedding_score is not None
+                and eval_row.llm_score is not None
+            ):
                 combined_score = round(
                     eval_row.embedding_score * 0.4 + eval_row.llm_score * 0.6,
                     3
@@ -324,19 +328,20 @@ def get_construct_results(survey_id: str):
                 "item_id": item.item_id,
                 "item_order": item.item_order,
                 "question_text": item.question_text,
-                "embedding_features": eval_row.embedding_features,
-                "embedding_score": eval_row.embedding_score,
-                "llm_features": sanitize_construct_llm_features(eval_row.llm_features),
-                "llm_score": eval_row.llm_score,
+                "embedding_features": eval_row.embedding_features if eval_row else None,
+                "embedding_score": eval_row.embedding_score if eval_row else None,
+                "llm_features": sanitize_construct_llm_features(eval_row.llm_features) if eval_row else None,
+                "llm_score": eval_row.llm_score if eval_row else None,
                 "combined_score": combined_score,
                 "status": score_status(combined_score),
-                "predicted_citc": eval_row.predicted_citc,
-                "predicted_alpha_impact": eval_row.predicted_alpha_impact,
-                "created_at": eval_row.created_at
+                "predicted_citc": eval_row.predicted_citc if eval_row else None,
+                "predicted_alpha_impact": eval_row.predicted_alpha_impact if eval_row else None,
+                "created_at": eval_row.created_at if eval_row else None
             })
 
         return {
             "survey_id": survey_id,
+            "item_count": len(results),
             "results": results
         }
 
