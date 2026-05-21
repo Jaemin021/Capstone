@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Smartphone } from 'lucide-react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   getPublicSurvey,
   getPublicSurveyAvailability,
@@ -158,11 +158,12 @@ function getDisplayOptions(item: BackendSurveyItem) {
 
 export function SurveyRespondPage() {
   const { id = '', accessKey = '', inviteKey = '' } = useParams()
-  const [searchParams] = useSearchParams()
   const isOneTimeMode = Boolean(inviteKey)
   const isPublicMode = Boolean(accessKey) || isOneTimeMode
   const isDevicePublicMode = Boolean(accessKey) && !isOneTimeMode
-  const isPreviewMode = !isPublicMode || searchParams.get('preview') === '1'
+  // Preview mode is available only on the main (non-public) route.
+  // Public share links must always follow real response rules.
+  const isPreviewMode = !isPublicMode
   const surveyIdentifier = isPublicMode ? (isOneTimeMode ? inviteKey : accessKey) : id
   const navigate = useNavigate()
   const { pushToast } = useToastStore()

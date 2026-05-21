@@ -297,7 +297,7 @@ export function SurveyListPage() {
                         )}
                       </button>
                       <Link
-                        to={`/survey/${survey.survey_id}/respond?preview=1`}
+                        to={`/survey/${survey.survey_id}/respond`}
                         className="inline-flex items-center gap-2 rounded-md border border-indigo-300 px-3 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-50"
                       >
                         <Eye size={15} />
