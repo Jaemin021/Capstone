@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BarChart3, Copy, Eye, FilePenLine, FilePlus2, Trash2 } from 'lucide-react'
+import { BarChart3, Copy, Eye, FilePenLine, FilePlus2, QrCode, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { createPublicSurveyLink, deleteSurvey, duplicateSurvey, getSurveyList } from '../api/surveyApi'
 import { LoadingSpinner } from '../components/LoadingSpinner'
@@ -21,6 +21,13 @@ function resolvePublicRespondUrl(origin: string, publicPath: string) {
   }
 }
 
+function resolveQrDisplayPageUrl(origin: string, respondUrl: string, surveyTitle: string) {
+  const fallbackBase = origin.endsWith('/') ? origin.slice(0, -1) : origin
+  const encodedRespondUrl = encodeURIComponent(respondUrl)
+  const encodedTitle = encodeURIComponent(surveyTitle)
+  return `${fallbackBase}/share/qr?target=${encodedRespondUrl}&title=${encodedTitle}`
+}
+
 export function SurveyListPage() {
   const queryClient = useQueryClient()
   const pushToast = useToastStore((state) => state.pushToast)
@@ -36,6 +43,7 @@ export function SurveyListPage() {
   const publicOrigin = configuredPublicOrigin || origin
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null)
   const [publicLinkLoadingId, setPublicLinkLoadingId] = useState<string | null>(null)
+  const [qrLinkLoadingId, setQrLinkLoadingId] = useState<string | null>(null)
   const [duplicateLoadingId, setDuplicateLoadingId] = useState<string | null>(null)
 
   const deleteSurveyMutation = useMutation<void, Error, string, { previous?: SurveyListResponse }>({
@@ -123,6 +131,40 @@ export function SurveyListPage() {
     }
   }
 
+  const copyQrDisplayLink = async (surveyId: string, surveyTitle: string) => {
+    setQrLinkLoadingId(surveyId)
+
+    try {
+      const link = await createPublicSurveyLink(surveyId, false)
+      const url = resolvePublicRespondUrl(publicOrigin, link.public_path)
+      const qrDisplayUrl = resolveQrDisplayPageUrl(publicOrigin, url, surveyTitle)
+
+      try {
+        await navigator.clipboard.writeText(qrDisplayUrl)
+        pushToast({
+          type: 'success',
+          title: 'QR 화면 링크 복사 완료',
+          description: qrDisplayUrl,
+        })
+      } catch {
+        pushToast({
+          type: 'info',
+          title: 'QR 화면 링크',
+          description: qrDisplayUrl,
+        })
+      }
+    } catch (error) {
+      console.error('[survey-list] create qr display link failed', error)
+      pushToast({
+        type: 'error',
+        title: 'QR 화면 링크 생성 실패',
+        description: '링크 생성 중 오류가 발생했습니다.',
+      })
+    } finally {
+      setQrLinkLoadingId(null)
+    }
+  }
+
   const copySurveyTemplate = async (surveyId: string) => {
     setDuplicateLoadingId(surveyId)
 
@@ -186,6 +228,7 @@ export function SurveyListPage() {
               const deletingId = deleteSurveyMutation.variables
               const isDeletingThis = deleteSurveyMutation.isPending && deletingId === survey.survey_id
               const isGeneratingPublicLink = publicLinkLoadingId === survey.survey_id
+              const isGeneratingQrLink = qrLinkLoadingId === survey.survey_id
               const isDuplicatingSurvey = duplicateLoadingId === survey.survey_id
 
               return (
@@ -235,6 +278,21 @@ export function SurveyListPage() {
                           <>
                             <Copy size={15} />
                             공유 링크
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-2 rounded-md border border-violet-300 px-3 py-2 text-sm font-bold text-violet-700 hover:bg-violet-50"
+                        disabled={isGeneratingQrLink}
+                        onClick={() => copyQrDisplayLink(survey.survey_id, survey.title)}
+                      >
+                        {isGeneratingQrLink ? (
+                          <LoadingSpinner compact label="QR 링크 생성 중" />
+                        ) : (
+                          <>
+                            <QrCode size={15} />
+                            QR 화면 링크
                           </>
                         )}
                       </button>
