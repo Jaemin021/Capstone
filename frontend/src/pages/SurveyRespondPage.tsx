@@ -171,7 +171,8 @@ export function SurveyRespondPage() {
   const [session, setSession] = useState<ResponseSession | null>(null)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isMobileClient, setIsMobileClient] = useState(true)
-  const requireMobileRespond = import.meta.env.VITE_REQUIRE_MOBILE_RESPOND === 'true'
+  const requireMobileRespond =
+    (import.meta.env.VITE_REQUIRE_MOBILE_RESPOND ?? 'true').toLowerCase() !== 'false'
   const canAccessByDevicePolicy = isPreviewMode || !requireMobileRespond || isMobileClient
   const publicDeviceId = useMemo(
     () => (isDevicePublicMode ? getOrCreatePublicDeviceId() : ''),
