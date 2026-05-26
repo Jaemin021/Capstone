@@ -1,6 +1,7 @@
 export type QuestionType = 'likert-5' | 'likert-7' | 'multiple' | 'short'
 export type BackendQuestionType = 'likert_5' | string
 export type EvaluationStatus = 'good' | 'warning' | 'bad' | 'unknown'
+export type ReliabilityStatus = 'sincere' | 'insincere' | 'good' | 'warning' | 'bad' | 'unknown'
 
 export interface ItemQualityResult {
   score: number
@@ -76,7 +77,7 @@ export interface ReliabilityRespondent {
   reason: string
 }
 
-export type ReliabilityLevel = 'high' | 'mid' | 'low'
+export type ReliabilityLevel = 'sincere' | 'insincere' | 'high' | 'mid' | 'low'
 
 export interface ReliabilityBucket {
   level: ReliabilityLevel
@@ -87,6 +88,8 @@ export interface ReliabilityBucket {
 export interface SurveyReliabilityResponse {
   survey_id?: string
   total_count?: number
+  sincere_count?: number
+  insincere_count?: number
   high_count?: number
   mid_count?: number
   low_count?: number
@@ -286,13 +289,13 @@ export interface CompactResponseFeatures {
   population_sample_count?: number
   item_count?: number
   reliability_score?: number
-  reliability_status?: EvaluationStatus
+  reliability_status?: ReliabilityStatus
   [key: string]: unknown
 }
 
 export interface BackendReliabilitySummary {
   score: number
-  status: EvaluationStatus
+  status: ReliabilityStatus
   reasons: string[]
 }
 

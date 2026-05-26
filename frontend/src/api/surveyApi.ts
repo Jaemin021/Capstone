@@ -483,7 +483,7 @@ export async function submitSurveyResponse(
       0,
       Math.round(100 - tooFastRatio * 35 - changeRatio * 12 - revisitRatio * 8),
     )
-    const status = score >= 75 ? 'good' : score >= 55 ? 'warning' : 'bad'
+    const status = score >= 55 ? 'sincere' : 'insincere'
 
     const result: SurveyResponseSubmitResult = {
       response_id: createMockId('response'),
@@ -726,15 +726,21 @@ export async function getSurveyReliability(
       return { respondents: [] }
     }
 
+    const status = stored.reliability.status
+    const isSincere = status === 'sincere' || status === 'good' || status === 'warning'
+    const sincereCount = isSincere ? 1 : 0
+    const insincereCount = isSincere ? 0 : 1
+
     return {
       total_count: 1,
-      high_count: stored.reliability.status === 'good' ? 1 : 0,
-      mid_count: stored.reliability.status === 'warning' ? 1 : 0,
-      low_count: stored.reliability.status === 'bad' ? 1 : 0,
+      sincere_count: sincereCount,
+      insincere_count: insincereCount,
+      high_count: sincereCount,
+      mid_count: 0,
+      low_count: insincereCount,
       distribution: [
-        { level: 'high', label: '상', count: stored.reliability.status === 'good' ? 1 : 0 },
-        { level: 'mid', label: '중', count: stored.reliability.status === 'warning' ? 1 : 0 },
-        { level: 'low', label: '하', count: stored.reliability.status === 'bad' ? 1 : 0 },
+        { level: 'sincere', label: '성실', count: sincereCount },
+        { level: 'insincere', label: '비성실', count: insincereCount },
       ],
       respondents: [
         {
@@ -742,7 +748,7 @@ export async function getSurveyReliability(
           submittedAt: new Date().toISOString(),
           reliabilityScore: stored.reliability.score,
           timePerItem: [Number(stored.features.avg_item_time_ms ?? 0) / 1000],
-          flagged: stored.reliability.status === 'bad',
+          flagged: !isSincere,
           reason: stored.reliability.reasons.join(', '),
         },
       ],

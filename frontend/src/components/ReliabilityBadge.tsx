@@ -13,9 +13,23 @@ export interface ReliabilityBadgeProps {
 function resolveLevel(score: number, kind: 'reliability' | 'citc') {
   const normalizedScore = kind === 'citc' ? score * 100 : score
 
+  if (kind === 'reliability') {
+    if (normalizedScore >= 55) {
+      return {
+        label: '성실',
+        className: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+      }
+    }
+
+    return {
+      label: '비성실',
+      className: 'bg-rose-50 text-rose-700 ring-rose-200',
+    }
+  }
+
   if (normalizedScore >= 75) {
     return {
-      label: '높음',
+      label: '좋음',
       className: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
     }
   }

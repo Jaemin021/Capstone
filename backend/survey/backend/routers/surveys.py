@@ -18,12 +18,14 @@ from services.feature_service import (
     calculate_content_features,
     calculate_relation_features,
     build_compact_features,
-    calculate_reliability_summary
+    calculate_reliability_summary,
+    resolve_binary_reliability_status,
 )
 from services.population_feature_service import calculate_population_features
 
 
 router = APIRouter(prefix="/surveys")
+POPULATION_REFRESH_BATCH_SIZE = 10
 
 
 def generate_access_key():
@@ -61,6 +63,43 @@ def _score_status(score, good=8.0, warning=6.0):
     if numeric >= warning:
         return "warning"
     return "bad"
+
+
+def _refresh_population_features_for_survey(db, survey_id: str):
+    responses = db.query(models.Response).filter_by(
+        survey_id=survey_id,
+        is_completed=True
+    ).all()
+
+    updated_count = 0
+
+    for response in responses:
+        db_feature = db.query(models.ResponseFeature).filter_by(
+            response_id=response.response_id
+        ).first()
+
+        if db_feature is None:
+            continue
+
+        population_features = calculate_population_features(
+            db=db,
+            survey_id=survey_id,
+            response_id=response.response_id
+        )
+
+        compact_features = build_compact_features(
+            log_f=db_feature.log_features or {},
+            content_f=db_feature.content_features or {},
+            relation_f=db_feature.relation_features or {},
+            population_f=population_features
+        )
+
+        db_feature.population_features = population_features
+        db_feature.compact_features = compact_features
+        updated_count += 1
+
+    db.commit()
+    return updated_count
 
 
 def normalize_item_category(value):
@@ -305,6 +344,38 @@ def create_response_and_features(db, survey_id: str, response: schemas.ResponseC
     db.commit()
     db.refresh(db_feature)
 
+    population_refresh = {
+        "triggered": False,
+        "batch_size": POPULATION_REFRESH_BATCH_SIZE,
+        "completed_response_count": None,
+        "updated_count": 0,
+    }
+
+    if bool(response.is_completed):
+        completed_response_count = db.query(models.Response).filter_by(
+            survey_id=survey_id,
+            is_completed=True
+        ).count()
+        population_refresh["completed_response_count"] = completed_response_count
+
+        if (
+            completed_response_count > 0
+            and completed_response_count % POPULATION_REFRESH_BATCH_SIZE == 0
+        ):
+            updated_count = _refresh_population_features_for_survey(
+                db=db,
+                survey_id=survey_id
+            )
+            population_refresh["triggered"] = True
+            population_refresh["updated_count"] = updated_count
+
+            refreshed_feature = db.query(models.ResponseFeature).filter_by(
+                response_id=response_id
+            ).first()
+            if refreshed_feature is not None:
+                compact_features = refreshed_feature.compact_features or compact_features
+                population_features = refreshed_feature.population_features or population_features
+
     return {
         "response_id": response_id,
         "survey_id": survey_id,
@@ -315,6 +386,7 @@ def create_response_and_features(db, survey_id: str, response: schemas.ResponseC
         "relation_features": relation_features,
         "features": compact_features,
         "reliability": calculate_reliability_summary(compact_features),
+        "population_refresh": population_refresh,
         "message": "response and features created"
     }
 
@@ -1354,9 +1426,8 @@ def get_survey_reliability_distribution(survey_id: str):
         ).all()
 
         respondents = []
-        high_count = 0
-        mid_count = 0
-        low_count = 0
+        sincere_count = 0
+        insincere_count = 0
 
         for response, response_feature in rows:
             compact = response_feature.compact_features or {}
@@ -1371,16 +1442,15 @@ def get_survey_reliability_distribution(survey_id: str):
             except Exception:
                 score = reliability["score"]
 
-            status = compact.get("reliability_status")
-            if status not in ["good", "warning", "bad"]:
-                status = reliability["status"]
+            status = resolve_binary_reliability_status(
+                status=compact.get("reliability_status"),
+                score=score
+            )
 
-            if status == "good":
-                high_count += 1
-            elif status == "warning":
-                mid_count += 1
+            if status == "sincere":
+                sincere_count += 1
             else:
-                low_count += 1
+                insincere_count += 1
 
             avg_item_time_ms = compact.get("avg_item_time_ms")
             time_per_item = []
@@ -1400,20 +1470,21 @@ def get_survey_reliability_distribution(survey_id: str):
                 "submittedAt": response.submitted_at,
                 "reliabilityScore": round(score, 1),
                 "timePerItem": time_per_item,
-                "flagged": status == "bad",
+                "flagged": status == "insincere",
                 "reason": reason_text
             })
 
         return {
             "survey_id": survey_id,
             "total_count": len(respondents),
-            "high_count": high_count,
-            "mid_count": mid_count,
-            "low_count": low_count,
+            "sincere_count": sincere_count,
+            "insincere_count": insincere_count,
+            "high_count": sincere_count,
+            "mid_count": 0,
+            "low_count": insincere_count,
             "distribution": [
-                {"level": "high", "label": "상", "count": high_count},
-                {"level": "mid", "label": "중", "count": mid_count},
-                {"level": "low", "label": "하", "count": low_count}
+                {"level": "sincere", "label": "성실", "count": sincere_count},
+                {"level": "insincere", "label": "비성실", "count": insincere_count}
             ],
             "respondents": respondents
         }
@@ -1819,47 +1890,12 @@ def create_response(survey_id: str, response: schemas.ResponseCreate):
 @router.post("/{survey_id}/refresh-population-features")
 def refresh_population_features(survey_id: str):
     db = SessionLocal()
-
-    responses = db.query(models.Response).filter_by(
-        survey_id=survey_id,
-        is_completed=True
-    ).all()
-
-    updated_count = 0
-
-    for response in responses:
-        db_feature = db.query(models.ResponseFeature).filter_by(
-            response_id=response.response_id
-        ).first()
-
-        if db_feature is None:
-            continue
-
-        population_features = calculate_population_features(
-            db=db,
-            survey_id=survey_id,
-            response_id=response.response_id
-        )
-
-        compact_features = build_compact_features(
-            log_f=db_feature.log_features or {},
-            content_f=db_feature.content_features or {},
-            relation_f=db_feature.relation_features or {},
-            population_f=population_features
-        )
-
-        db_feature.population_features = population_features
-        db_feature.compact_features = compact_features
-
-        updated_count += 1
-
-    db.commit()
-
-    result = {
-        "survey_id": survey_id,
-        "updated_count": updated_count,
-        "message": "population features refreshed"
-    }
-
-    db.close()
-    return result
+    try:
+        updated_count = _refresh_population_features_for_survey(db=db, survey_id=survey_id)
+        return {
+            "survey_id": survey_id,
+            "updated_count": updated_count,
+            "message": "population features refreshed"
+        }
+    finally:
+        db.close()

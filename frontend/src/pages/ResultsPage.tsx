@@ -32,6 +32,7 @@ import type {
   ConstructEvaluationItem,
   EvaluationStatus,
   QualityEvaluationItem,
+  ReliabilityStatus,
   SurveyReliabilityResponse,
   StatisticsEvaluationResponse,
   SurveyResponseSubmitResult,
@@ -126,7 +127,15 @@ function summarizeQualityLlmFailures(items: QualityEvaluationItem[]) {
   return `${failedItems.length}개 문항의 LLM 평가가 실패했습니다. 백엔드 설정/로그를 확인해 주세요.`
 }
 
-function statusLabel(status?: EvaluationStatus) {
+function statusLabel(status?: EvaluationStatus | ReliabilityStatus) {
+  if (status === 'sincere') {
+    return '성실'
+  }
+
+  if (status === 'insincere') {
+    return '비성실'
+  }
+
   if (status === 'good') {
     return '신뢰도 높음'
   }
@@ -142,8 +151,8 @@ function statusLabel(status?: EvaluationStatus) {
   return '결과 없음'
 }
 
-function statusClassName(status?: EvaluationStatus) {
-  if (status === 'good') {
+function statusClassName(status?: EvaluationStatus | ReliabilityStatus) {
+  if (status === 'sincere' || status === 'good') {
     return 'bg-emerald-50 text-emerald-700 ring-emerald-200'
   }
 
@@ -151,7 +160,7 @@ function statusClassName(status?: EvaluationStatus) {
     return 'bg-amber-50 text-amber-700 ring-amber-200'
   }
 
-  if (status === 'bad') {
+  if (status === 'insincere' || status === 'bad') {
     return 'bg-rose-50 text-rose-700 ring-rose-200'
   }
 
@@ -554,21 +563,16 @@ function StatisticsPanel({ statistics }: { statistics?: StatisticsEvaluationResp
 
 function ReliabilityDistributionPanel({ data }: { data?: SurveyReliabilityResponse }) {
   const respondents = data?.respondents ?? []
-  const fallbackHigh = respondents.filter((row) => row.reliabilityScore >= 75).length
-  const fallbackMid = respondents.filter(
-    (row) => row.reliabilityScore >= 55 && row.reliabilityScore < 75,
-  ).length
-  const fallbackLow = respondents.filter((row) => row.reliabilityScore < 55).length
+  const fallbackSincere = respondents.filter((row) => !row.flagged).length
+  const fallbackInsincere = respondents.length - fallbackSincere
 
-  const high = data?.high_count ?? fallbackHigh
-  const mid = data?.mid_count ?? fallbackMid
-  const low = data?.low_count ?? fallbackLow
+  const sincere = data?.sincere_count ?? data?.high_count ?? fallbackSincere
+  const insincere = data?.insincere_count ?? data?.low_count ?? fallbackInsincere
   const total = data?.total_count ?? respondents.length
 
   const chartData = [
-    { label: '상', count: high, color: '#10b981' },
-    { label: '중', count: mid, color: '#f59e0b' },
-    { label: '하', count: low, color: '#ef4444' },
+    { label: '성실', count: sincere, color: '#10b981' },
+    { label: '비성실', count: insincere, color: '#ef4444' },
   ]
 
   if (total <= 0) {
@@ -582,7 +586,7 @@ function ReliabilityDistributionPanel({ data }: { data?: SurveyReliabilityRespon
   return (
     <div className="space-y-4">
       <p className="text-sm font-bold text-slate-600">
-        총 응답 {total}명 (상 {high}명 / 중 {mid}명 / 하 {low}명)
+        총 응답 {total}명 (성실 {sincere}명 / 비성실 {insincere}명)
       </p>
       <div className="h-64 w-full rounded-lg border border-slate-200 bg-slate-50 p-3">
         <ResponsiveContainer width="100%" height="100%">
@@ -1476,3 +1480,4 @@ export function ResultsPage() {
     </div>
   )
 }
+
