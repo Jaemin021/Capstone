@@ -10,6 +10,28 @@ OFFLINE_EXCLUSION_RATIO_THRESHOLD = float(
 EXCLUDE_IF_CONNECTION_LOST = (
     os.getenv("EXCLUDE_IF_CONNECTION_LOST", "1").strip().lower() not in {"0", "false", "no"}
 )
+RELIABILITY_SINCERE_THRESHOLD = float(
+    os.getenv("RELIABILITY_SINCERE_THRESHOLD", "55")
+)
+
+
+def resolve_binary_reliability_status(status=None, score=None):
+    if isinstance(status, str):
+        normalized_status = status.strip().lower()
+        if normalized_status in {"sincere", "good", "warning"}:
+            return "sincere"
+        if normalized_status in {"insincere", "bad"}:
+            return "insincere"
+
+    try:
+        numeric_score = float(score)
+    except (TypeError, ValueError):
+        return "insincere"
+
+    if numeric_score >= RELIABILITY_SINCERE_THRESHOLD:
+        return "sincere"
+
+    return "insincere"
 
 
 def safe_avg(values, default=0):
@@ -373,12 +395,7 @@ def calculate_reliability_summary(features):
 
     final_score = round(max(0, min(100, score)), 1)
 
-    if final_score >= 75:
-        status = "good"
-    elif final_score >= 55:
-        status = "warning"
-    else:
-        status = "bad"
+    status = resolve_binary_reliability_status(score=final_score)
 
     return {
         "score": final_score,

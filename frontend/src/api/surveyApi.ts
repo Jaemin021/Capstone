@@ -66,6 +66,7 @@ function buildMockSurvey(payload: BackendSurveyCreatePayload): BackendSurveyResp
       item_id: itemId,
       item_order: index + 1,
       question_text: item.question_text,
+      item_category: item.item_category ?? null,
       question_type: item.question_type,
       item_role: 'normal',
       is_generated: false,
@@ -152,6 +153,56 @@ export async function createSurvey(
   return data
 }
 
+export async function duplicateSurvey(surveyId: string): Promise<BackendSurveyResponse> {
+  if (useMockApi) {
+    const raw = window.localStorage.getItem(getMockSurveyStorageKey(surveyId))
+    if (!raw) {
+      throw new Error('Mock survey not found')
+    }
+
+    const source = JSON.parse(raw) as BackendSurveyResponse
+    const nextSurveyId = createMockId('survey')
+    const itemIdMap = new Map<string, string>()
+
+    const copiedItems = source.items
+      .slice()
+      .sort((a, b) => a.item_order - b.item_order)
+      .map((item) => {
+        const copiedItemId = createMockId('item')
+        itemIdMap.set(item.item_id, copiedItemId)
+
+        return {
+          ...item,
+          item_id: copiedItemId,
+          source_item_id: item.source_item_id,
+          options: item.options.map((option) => ({
+            ...option,
+            option_id: `${copiedItemId}-option-${option.option_order}`,
+          })),
+        }
+      })
+      .map((item) => ({
+        ...item,
+        source_item_id: item.source_item_id ? itemIdMap.get(item.source_item_id) ?? null : null,
+      }))
+
+    const copied: BackendSurveyResponse = {
+      ...source,
+      survey_id: nextSurveyId,
+      title: `${source.title} (복사본)`,
+      status: 'draft',
+      items: copiedItems,
+      message: 'mock survey duplicated',
+    }
+
+    window.localStorage.setItem(getMockSurveyStorageKey(nextSurveyId), JSON.stringify(copied))
+    return copied
+  }
+
+  const { data } = await http.post<BackendSurveyResponse>(`/surveys/${surveyId}/duplicate`)
+  return data
+}
+
 export async function updateSurvey(
   surveyId: string,
   payload: BackendSurveyUpdatePayload,
@@ -171,6 +222,7 @@ export async function updateSurvey(
         item_id: itemId,
         item_order: index + 1,
         question_text: item.question_text,
+        item_category: item.item_category ?? null,
         question_type: item.question_type,
         item_role: 'normal',
         is_generated: false,
@@ -431,7 +483,7 @@ export async function submitSurveyResponse(
       0,
       Math.round(100 - tooFastRatio * 35 - changeRatio * 12 - revisitRatio * 8),
     )
-    const status = score >= 75 ? 'good' : score >= 55 ? 'warning' : 'bad'
+    const status = score >= 55 ? 'sincere' : 'insincere'
 
     const result: SurveyResponseSubmitResult = {
       response_id: createMockId('response'),
@@ -674,15 +726,21 @@ export async function getSurveyReliability(
       return { respondents: [] }
     }
 
+    const status = stored.reliability.status
+    const isSincere = status === 'sincere' || status === 'good' || status === 'warning'
+    const sincereCount = isSincere ? 1 : 0
+    const insincereCount = isSincere ? 0 : 1
+
     return {
       total_count: 1,
-      high_count: stored.reliability.status === 'good' ? 1 : 0,
-      mid_count: stored.reliability.status === 'warning' ? 1 : 0,
-      low_count: stored.reliability.status === 'bad' ? 1 : 0,
+      sincere_count: sincereCount,
+      insincere_count: insincereCount,
+      high_count: sincereCount,
+      mid_count: 0,
+      low_count: insincereCount,
       distribution: [
-        { level: 'high', label: '상', count: stored.reliability.status === 'good' ? 1 : 0 },
-        { level: 'mid', label: '중', count: stored.reliability.status === 'warning' ? 1 : 0 },
-        { level: 'low', label: '하', count: stored.reliability.status === 'bad' ? 1 : 0 },
+        { level: 'sincere', label: '성실', count: sincereCount },
+        { level: 'insincere', label: '비성실', count: insincereCount },
       ],
       respondents: [
         {
@@ -690,7 +748,7 @@ export async function getSurveyReliability(
           submittedAt: new Date().toISOString(),
           reliabilityScore: stored.reliability.score,
           timePerItem: [Number(stored.features.avg_item_time_ms ?? 0) / 1000],
-          flagged: stored.reliability.status === 'bad',
+          flagged: !isSincere,
           reason: stored.reliability.reasons.join(', '),
         },
       ],
@@ -759,6 +817,46 @@ export async function downloadSurveyResponseFeaturesCsv(surveyId: string): Promi
   }
 
   const { data } = await http.get<Blob>(`/surveys/${surveyId}/response-features.csv`, {
+    responseType: 'blob',
+  })
+
+  const blob =
+    data instanceof Blob ? data : new Blob([data], { type: 'text/csv;charset=utf-8' })
+  triggerCsvDownload(blob, fileName)
+}
+
+export async function downloadSurveyItemEvaluationsCsv(surveyId: string): Promise<void> {
+  const fileName = `survey-${surveyId}-item-evaluations.csv`
+
+  if (useMockApi) {
+    const survey = await getSurvey(surveyId)
+    const header = [
+      'survey_id',
+      'item_id',
+      'item_order',
+      'item_role',
+      'item_category',
+      'question_text',
+      'options',
+    ]
+
+    const rows = survey.items.map((item) => [
+      surveyId,
+      item.item_id,
+      item.item_order,
+      item.item_role ?? '',
+      item.item_category ?? '',
+      item.question_text ?? '',
+      item.options.map((option) => option.option_label).join(' | '),
+    ])
+
+    const csvText = [header.join(','), ...rows.map((row) => row.map(csvEscape).join(','))].join('\n')
+    const blob = new Blob([`\ufeff${csvText}`], { type: 'text/csv;charset=utf-8' })
+    triggerCsvDownload(blob, fileName)
+    return
+  }
+
+  const { data } = await http.get<Blob>(`/surveys/${surveyId}/item-evaluations.csv`, {
     responseType: 'blob',
   })
 

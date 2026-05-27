@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from database import engine
 import models
 
@@ -41,6 +42,17 @@ app.add_middleware(
 )
 
 models.Base.metadata.create_all(bind=engine)
+
+
+def ensure_sqlite_schema():
+    with engine.begin() as connection:
+        table_info = connection.execute(text("PRAGMA table_info(survey_items)")).fetchall()
+        columns = {row[1] for row in table_info}
+        if "item_category" not in columns:
+            connection.execute(text("ALTER TABLE survey_items ADD COLUMN item_category TEXT"))
+
+
+ensure_sqlite_schema()
 
 app.include_router(surveys.router)
 app.include_router(survey_evaluations.router)

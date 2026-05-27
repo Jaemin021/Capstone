@@ -22,23 +22,22 @@ def build_construct_text(survey, normal_items):
     return "\n".join(parts)
 
 
-def evaluate_embedding_construct_features(target_item, survey, normal_items):
-    target_vec = get_embedding(target_item.question_text)
-
-    construct_text = build_construct_text(survey, normal_items)
-    construct_vec = get_embedding(construct_text)
+def calculate_embedding_construct_features_from_vectors(
+    target_item_id,
+    item_vectors,
+    construct_vec,
+):
+    target_vec = item_vectors.get(target_item_id)
+    if target_vec is None:
+        raise ValueError(f"target embedding missing for item_id={target_item_id}")
 
     construct_similarity = cosine_similarity(target_vec, construct_vec)
-
     item_sims = []
 
-    for other in normal_items:
-        if other.item_id == target_item.item_id:
+    for other_item_id, other_vec in item_vectors.items():
+        if other_item_id == target_item_id:
             continue
-
-        other_vec = get_embedding(other.question_text)
-        sim = cosine_similarity(target_vec, other_vec)
-        item_sims.append(sim)
+        item_sims.append(cosine_similarity(target_vec, other_vec))
 
     if item_sims:
         mean_item_similarity = sum(item_sims) / len(item_sims)
@@ -54,7 +53,7 @@ def evaluate_embedding_construct_features(target_item, survey, normal_items):
         "mean_item_similarity": mean_item_similarity,
         "max_item_similarity": max_item_similarity,
         "min_item_similarity": min_item_similarity,
-        "comparison_item_count": len(item_sims)
+        "comparison_item_count": len(item_sims),
     }
 
     embedding_score = (
@@ -64,5 +63,22 @@ def evaluate_embedding_construct_features(target_item, survey, normal_items):
 
     return {
         "embedding_features": embedding_features,
-        "embedding_score": round(embedding_score, 3)
+        "embedding_score": round(embedding_score, 3),
     }
+
+
+def evaluate_embedding_construct_features(target_item, survey, normal_items):
+    target_vec = get_embedding(target_item.question_text)
+
+    construct_text = build_construct_text(survey, normal_items)
+    construct_vec = get_embedding(construct_text)
+
+    item_vectors = {}
+    for item in normal_items:
+        item_vectors[item.item_id] = get_embedding(item.question_text)
+
+    return calculate_embedding_construct_features_from_vectors(
+        target_item_id=target_item.item_id,
+        item_vectors=item_vectors,
+        construct_vec=construct_vec,
+    )

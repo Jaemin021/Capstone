@@ -6,6 +6,7 @@ import { ResultsPage } from './pages/ResultsPage'
 import { SurveyRespondPage } from './pages/SurveyRespondPage'
 import { SurveyEditorPage } from './pages/SurveyEditorPage'
 import { SurveyListPage } from './pages/SurveyListPage'
+import { SurveyQrSharePage } from './pages/SurveyQrSharePage'
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
         <Route path="/public/s/:accessKey/complete" element={<PublicSurveyCompletePage />} />
         <Route path="/public/o/:inviteKey" element={<SurveyRespondPage />} />
         <Route path="/public/o/:inviteKey/complete" element={<PublicSurveyCompletePage />} />
+        <Route path="/share/qr" element={<SurveyQrSharePage />} />
         <Route path="/survey/:id/results" element={<ResultsPage />} />
         <Route path="/guide" element={<GuidePage />} />
         <Route path="*" element={<Navigate to="/survey/create" replace />} />

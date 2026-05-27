@@ -19,8 +19,9 @@ export function AppShell({ children }: AppShellProps) {
   const resetDraft = useSurveyStore((state) => state.resetDraft)
   const isRespondPage = /^\/survey\/[^/]+\/respond\/?$/.test(location.pathname)
   const isPublicSurveyPage = /^\/public\/(s|o)\/[^/]+(\/complete)?\/?$/.test(location.pathname)
+  const isQrSharePage = /^\/share\/qr\/?$/.test(location.pathname)
 
-  if (isRespondPage || isPublicSurveyPage) {
+  if (isRespondPage || isPublicSurveyPage || isQrSharePage) {
     return (
       <div className="min-h-screen bg-slate-100">
         <main className="px-4 py-5 lg:px-6">{children}</main>
