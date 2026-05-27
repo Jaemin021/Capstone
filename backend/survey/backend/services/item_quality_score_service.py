@@ -2,21 +2,21 @@ import re
 
 
 TERM_CATEGORY_WEIGHTS = {
-    "ambiguous": 1.1,
+    "ambiguous": 1.0,
     "negative": 0.8,
-    "leading": 1.0,
-    "double_barreled": 1.5,
+    "leading": 0.9,
+    "double_barreled": 1.2,
 }
 
 PROBLEM_CATEGORY_WEIGHTS = {
-    "clarity_issue": 0.6,
-    "single_concept_issue": 0.9,
-    "answerability_issue": 0.7,
-    "neutrality_issue": 0.6,
-    "leading": 0.7,
-    "double_barreled": 1.0,
-    "ambiguous_time": 1.0,
-    "negative_wording": 0.8,
+    "clarity_issue": 0.5,
+    "single_concept_issue": 0.7,
+    "answerability_issue": 0.6,
+    "neutrality_issue": 0.5,
+    "leading": 0.6,
+    "double_barreled": 0.8,
+    "ambiguous_time": 0.9,
+    "negative_wording": 0.7,
 }
 
 CLEAR_OPTION_HINTS = (
@@ -114,9 +114,9 @@ def _calculate_dictionary_penalty(llm):
 
     detected_terms_count = len(_to_list(llm.get("detected_terms")))
     if detected_terms_count > 0 and (problem_assessment_count > 0 or len(categories) > 0):
-        penalty += min(detected_terms_count, 5) * 0.35
+        penalty += min(detected_terms_count, 5) * 0.30
 
-    return min(penalty, 6.0)
+    return min(penalty, 5.0)
 
 
 def _is_clear_option(text):
@@ -201,8 +201,8 @@ def _calculate_option_adjustment(llm, options):
     if not _needs_option_recovery(llm):
         return 0.0
 
-    recovery_bonus = max(0.0, clarity - 0.55) * 2.8
-    unresolved_ambiguity_penalty = max(0.0, 0.45 - clarity) * 2.2
+    recovery_bonus = max(0.0, clarity - 0.50) * 3.6
+    unresolved_ambiguity_penalty = max(0.0, 0.45 - clarity) * 1.8
     return recovery_bonus - unresolved_ambiguity_penalty
 
 
