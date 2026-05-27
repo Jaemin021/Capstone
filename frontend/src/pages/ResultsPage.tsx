@@ -1414,17 +1414,24 @@ export function ResultsPage() {
             <div>
               <h2 className="text-lg font-black text-slate-950">통계 분석</h2>
               <p className="mt-1 text-sm text-slate-600">
-                응답 수가 충분할 때 Cronbach alpha와 CITC를 확인할 수 있습니다.
+                현재 저장된 완성 응답 기준으로 Cronbach alpha와 CITC를 다시 계산해 최신화할 수 있습니다.
               </p>
             </div>
           </div>
           <button
             type="button"
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:bg-slate-100"
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-bold text-white hover:bg-teal-700 disabled:bg-slate-300"
             disabled={evaluationPending}
-            onClick={() => statisticsMutation.mutate()}
+            onClick={() => {
+              setStatisticsRowsOpen(true)
+              statisticsMutation.mutate()
+            }}
           >
-            {statisticsMutation.isPending ? <LoadingSpinner compact label="분석 중" /> : '통계 분석'}
+            {statisticsMutation.isPending ? (
+              <LoadingSpinner compact label="CITC 최신화 중" />
+            ) : (
+              '현재 응답으로 CITC 최신화'
+            )}
           </button>
         </div>
 
