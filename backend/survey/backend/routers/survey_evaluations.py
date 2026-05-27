@@ -4,6 +4,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import re
+import time
 from fastapi import APIRouter
 from database import SessionLocal
 import models
@@ -106,26 +107,70 @@ def build_fallback_rewrite(question_text, problem_categories, detected_terms):
 
 
 def _parse_quality_worker_count():
-    raw = os.getenv("QUALITY_LLM_MAX_WORKERS", "6").strip()
+    # Stability-first default: keep concurrency low to avoid transient external failures.
+    raw = os.getenv("QUALITY_LLM_MAX_WORKERS", "2").strip()
     try:
         parsed = int(raw)
     except Exception:
-        return 6
+        return 2
     return max(1, min(parsed, 12))
+
+
+def _parse_quality_eval_retries():
+    raw = os.getenv("QUALITY_EVAL_MAX_RETRIES", "2").strip()
+    try:
+        parsed = int(raw)
+    except Exception:
+        return 2
+    return max(0, min(parsed, 6))
+
+
+def _parse_quality_eval_retry_delay_ms():
+    raw = os.getenv("QUALITY_EVAL_RETRY_DELAY_MS", "200").strip()
+    try:
+        parsed = int(raw)
+    except Exception:
+        return 200
+    return max(0, min(parsed, 5000))
+
+
+def _default_quality_result_from_rules():
+    return {
+        "problem_categories": [],
+        "detected_terms": [],
+        "llm_comment": "자동 품질 평가 중 일시 오류가 발생해 기본 결과로 대체했습니다.",
+        "suggested_rewrite": "",
+    }
 
 
 def _evaluate_single_quality_item(survey_id: str, item_snapshot: dict):
     question_text = item_snapshot["question_text"]
     llm_result = None
     llm_error = None
+    recovered_error = None
 
-    try:
-        llm_result = evaluate_item_with_dictionary_rules(
-            question_text,
-            item_snapshot["option_texts"]
-        )
-    except Exception as error:
-        llm_error = repr(error)
+    max_retries = _parse_quality_eval_retries()
+    retry_delay_sec = _parse_quality_eval_retry_delay_ms() / 1000.0
+
+    for attempt in range(max_retries + 1):
+        try:
+            llm_result = evaluate_item_with_dictionary_rules(
+                question_text,
+                item_snapshot["option_texts"]
+            )
+            break
+        except Exception as error:
+            llm_error = repr(error)
+            if attempt >= max_retries:
+                break
+            if retry_delay_sec > 0:
+                time.sleep(retry_delay_sec)
+
+    if llm_result is None:
+        # Hard-fallback so the entire evaluation can still complete.
+        llm_result = _default_quality_result_from_rules()
+        recovered_error = llm_error
+        llm_error = None
 
     problem_categories = _to_string_list(llm_result.get("problem_categories")) if isinstance(llm_result, dict) else []
     detected_terms = _to_string_list(llm_result.get("detected_terms")) if isinstance(llm_result, dict) else []
@@ -179,11 +224,12 @@ def _evaluate_single_quality_item(survey_id: str, item_snapshot: dict):
         "llm_error": llm_error
     }
     debug_error = None
-    if llm_error:
+    if llm_error or recovered_error:
         debug_error = {
             "item_id": item_snapshot["item_id"],
             "item_order": item_snapshot["item_order"],
-            "error": llm_error
+            "error": llm_error or recovered_error,
+            "recovered": bool(recovered_error),
         }
 
     return {
@@ -366,15 +412,19 @@ def get_construct_results(survey_id: str):
 
         for item, eval_row in rows:
             combined_score = None
-            if (
-                eval_row is not None
-                and eval_row.embedding_score is not None
-                and eval_row.llm_score is not None
-            ):
-                combined_score = round(
-                    eval_row.embedding_score * 0.4 + eval_row.llm_score * 0.6,
-                    3
-                )
+            if eval_row is not None:
+                has_embedding = eval_row.embedding_score is not None
+                has_llm = eval_row.llm_score is not None
+
+                if has_embedding and has_llm:
+                    combined_score = round(
+                        eval_row.embedding_score * 0.4 + eval_row.llm_score * 0.6,
+                        3
+                    )
+                elif has_embedding:
+                    combined_score = round(float(eval_row.embedding_score), 3)
+                elif has_llm:
+                    combined_score = round(float(eval_row.llm_score), 3)
 
             results.append({
                 "item_id": item.item_id,

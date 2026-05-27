@@ -3,6 +3,7 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+import time
 from types import SimpleNamespace
 import models
 
@@ -36,12 +37,31 @@ def sanitize_construct_llm_features(llm_features):
 
 
 def _parse_construct_llm_worker_count():
-    raw = os.getenv("CONSTRUCT_LLM_MAX_WORKERS", "4").strip()
+    # Stability-first default: keep concurrency low for external LLM calls.
+    raw = os.getenv("CONSTRUCT_LLM_MAX_WORKERS", "1").strip()
     try:
         parsed = int(raw)
     except Exception:
-        return 4
+        return 1
     return max(1, min(parsed, 8))
+
+
+def _parse_construct_llm_max_retries():
+    raw = os.getenv("CONSTRUCT_LLM_MAX_RETRIES", "2").strip()
+    try:
+        parsed = int(raw)
+    except Exception:
+        return 2
+    return max(0, min(parsed, 6))
+
+
+def _parse_construct_llm_retry_delay_ms():
+    raw = os.getenv("CONSTRUCT_LLM_RETRY_DELAY_MS", "300").strip()
+    try:
+        parsed = int(raw)
+    except Exception:
+        return 300
+    return max(0, min(parsed, 5000))
 
 
 def _evaluate_single_construct_llm(target_item_snapshot, survey_snapshot, all_item_snapshots):
@@ -49,27 +69,38 @@ def _evaluate_single_construct_llm(target_item_snapshot, survey_snapshot, all_it
     survey = SimpleNamespace(**survey_snapshot)
     normal_items = [SimpleNamespace(**row) for row in all_item_snapshots]
 
-    try:
-        llm_features = evaluate_llm_construct_features(
-            target_item=target_item,
-            survey=survey,
-            normal_items=normal_items
-        )
-        llm_features = sanitize_construct_llm_features(llm_features)
-        llm_score = calculate_llm_construct_score(llm_features)
-        return {
-            "item_id": target_item.item_id,
-            "llm_features": llm_features,
-            "llm_score": llm_score,
-            "error": None,
-        }
-    except Exception as e:
-        return {
-            "item_id": target_item.item_id,
-            "llm_features": None,
-            "llm_score": None,
-            "error": f"llm failed: {repr(e)}",
-        }
+    max_retries = _parse_construct_llm_max_retries()
+    retry_delay_sec = _parse_construct_llm_retry_delay_ms() / 1000.0
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            llm_features = evaluate_llm_construct_features(
+                target_item=target_item,
+                survey=survey,
+                normal_items=normal_items
+            )
+            llm_features = sanitize_construct_llm_features(llm_features)
+            llm_score = calculate_llm_construct_score(llm_features)
+            return {
+                "item_id": target_item.item_id,
+                "llm_features": llm_features,
+                "llm_score": llm_score,
+                "error": None,
+            }
+        except Exception as e:
+            last_error = e
+            if attempt >= max_retries:
+                break
+            if retry_delay_sec > 0:
+                time.sleep(retry_delay_sec)
+
+    return {
+        "item_id": target_item.item_id,
+        "llm_features": None,
+        "llm_score": None,
+        "error": f"llm failed(after retries): {repr(last_error)}",
+    }
 
 
 def evaluate_construct_for_survey(db, survey_id: str, overwrite: bool = True):
