@@ -1,6 +1,6 @@
 export type QuestionType = 'likert-5' | 'likert-7' | 'multiple' | 'short'
 export type BackendQuestionType = 'likert_5' | string
-export type EvaluationStatus = 'good' | 'warning' | 'bad' | 'unknown'
+export type EvaluationStatus = 'good' | 'warning' | 'bad' | 'ok' | 'problem' | 'error' | 'unknown'
 export type ReliabilityStatus = 'sincere' | 'insincere' | 'good' | 'warning' | 'bad' | 'unknown'
 
 export interface ItemQualityResult {
@@ -316,8 +316,9 @@ export interface QualityEvaluationItem {
   item_id: string
   item_order: number
   question_text: string
-  quality_score: number | null
+  quality_score?: number | null
   status: EvaluationStatus
+  has_problem?: boolean | null
   problem_categories?: string[] | null
   detected_terms?: string[] | null
   llm_comment?: string | null

@@ -65,6 +65,12 @@ def _score_status(score, good=8.0, warning=6.0):
     return "bad"
 
 
+def _quality_status_from_categories(problem_categories):
+    if not isinstance(problem_categories, list):
+        return "unknown"
+    return "problem" if len(problem_categories) > 0 else "ok"
+
+
 def _refresh_population_features_for_survey(db, survey_id: str):
     responses = db.query(models.Response).filter_by(
         survey_id=survey_id,
@@ -1718,7 +1724,6 @@ def download_survey_item_evaluations_csv(survey_id: str):
             "item_category",
             "question_text",
             "options_json",
-            "quality_score",
             "quality_status",
             "quality_problem_categories_json",
             "quality_detected_terms_json",
@@ -1751,8 +1756,9 @@ def download_survey_item_evaluations_csv(survey_id: str):
             quality = quality_map.get(item.item_id)
             construct = construct_map.get(item.item_id)
 
-            quality_score = quality.quality_score if quality else None
-            quality_status = _score_status(quality_score, good=8.0, warning=6.0)
+            quality_status = _quality_status_from_categories(
+                quality.problem_categories if quality else None
+            )
 
             embedding_score = construct.embedding_score if construct else None
             llm_score = construct.llm_score if construct else None
@@ -1783,7 +1789,6 @@ def download_survey_item_evaluations_csv(survey_id: str):
                 item.item_category or "",
                 item.question_text or "",
                 _json_text(options_map.get(item.item_id, [])),
-                _safe_float_or_empty(quality_score),
                 quality_status,
                 _json_text(quality.problem_categories if quality else None),
                 _json_text(quality.detected_terms if quality else None),

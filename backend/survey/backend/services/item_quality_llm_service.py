@@ -179,29 +179,21 @@ def evaluate_item_with_llm(question_text, options):
 You are a strict survey wording evaluator for measurement quality.
 
 Primary objective:
-- Detect wording risks that can distort responses.
-- Treat dictionary-matched terms as high-priority risk signals.
-- Penalize risky term usage clearly, unless options make the meaning explicit.
+- Detect wording risks using the provided term dictionary.
+- Focus on unresolved wording problems only (dictionary-context based).
 
 Task:
-1) Evaluate wording quality for the item.
-2) Use the term dictionary as a risk detector.
-3) Judge risks in full context of question + options.
-
-Scoring calibration:
-- 9~10: no practical wording risk.
-- 7~8: generally acceptable but with minor risk.
-- 6: borderline.
-- <6: clear quality-harming wording issue.
-- If risky dictionary terms remain unresolved, score should drop meaningfully.
+1) Use the term dictionary as the primary risk detector.
+2) Judge in full context of question + options.
+3) If options provide concrete timeframe/frequency anchors (e.g., "지난 2주", "주 1~2회"),
+   treat ambiguous-frequency wording as acceptable in context.
 
 Option recovery rule (important):
 - If options provide concrete anchors (frequency/timeframe/intensity), ambiguity risk may recover.
-- Explicitly reflect this in option_clarity_score and option_recovery.
+- If recovered, do not include that term in unresolved problem categories.
 
 Rewrite policy:
-- If overall_quality_score < 6 or any context_effect="problem" term remains unresolved,
-  suggested_rewrite must be one Korean sentence.
+- If any context_effect="problem" term remains unresolved, suggested_rewrite must be one Korean sentence.
 - suggested_rewrite must directly resolve dictionary-based risk terms.
 - Keep construct intent and response format.
 - Do not prepend labels such as "수정 제안:".
@@ -221,11 +213,6 @@ Term dictionary:
 
 Return ONLY JSON with this schema:
 {{
-  "clarity": 0-10,
-  "single_concept": 0-10,
-  "answerability": 0-10,
-  "neutrality": 0-10,
-  "overall_quality_score": 0-10,
   "problem_categories": ["clarity_issue|single_concept_issue|answerability_issue|neutrality_issue|leading|double_barreled|ambiguous_time|negative_wording"],
   "detected_terms": ["matched terms or variants that mattered"],
   "term_assessments": [
@@ -255,7 +242,7 @@ Return ONLY JSON with this schema:
                 "content": (
                     "Return ONLY valid JSON. "
                     "Use Korean for all free-text fields. "
-                    "Apply meaningful score drops for unresolved dictionary-risk terms. "
+                    "Focus on dictionary-based unresolved wording problems only. "
                     "If risk is resolved by options, reflect it explicitly in option_recovery."
                 ),
             },
@@ -282,6 +269,7 @@ def generate_rewrite_with_llm(question_text, options, problem_categories=None, d
 - 모호한 빈도/시간 표현은 구체 기준(예: 지난 2주, 주 n회)을 넣어 명확히 하세요.
 - 이중질문이면 한 문항 한 개념으로 줄이세요.
 - 부정표현이면 가능한 긍정형으로 바꾸세요.
+- 단, 보기에 이미 구체적인 시간/기간/빈도 기준이 충분하면 불필요한 수정을 피하세요.
 
 제약:
 - 출력은 문항 1문장만.
@@ -348,6 +336,31 @@ def _is_time_or_frequency_anchor(text):
     return any(hint in lowered for hint in anchor_hints)
 
 
+def _is_concrete_time_frequency_anchor(text):
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+
+    if re.search(r"\d+\s*(회|번|일|주|개월|달|월|년|시간|분)", lowered):
+        return True
+
+    concrete_hints = (
+        "지난",
+        "최근",
+        "주당",
+        "매일",
+        "주 1",
+        "주 2",
+        "주 3",
+        "2주",
+        "4주",
+        "한 달",
+        "1달",
+        "두 달",
+    )
+    return any(hint in lowered for hint in concrete_hints)
+
+
 def _estimate_dictionary_option_clarity_score(options):
     option_texts = [str(option).strip() for option in (options or []) if str(option).strip()]
     if not option_texts:
@@ -362,6 +375,16 @@ def _estimate_dictionary_option_clarity_score(options):
 
     score = (anchor_ratio + extreme_bonus) * 10.0
     return max(0.0, min(10.0, round(score, 3)))
+
+
+def _has_concrete_time_frequency_options(options):
+    option_texts = [str(option).strip() for option in (options or []) if str(option).strip()]
+    if not option_texts:
+        return False
+
+    anchor_count = sum(1 for option in option_texts if _is_concrete_time_frequency_anchor(option))
+    required_count = max(2, (len(option_texts) + 1) // 2)
+    return anchor_count >= required_count
 
 
 def _rewrite_by_dictionary_rules(question_text, unresolved_terms, unresolved_categories):
@@ -414,7 +437,7 @@ def evaluate_item_with_dictionary_rules(question_text, options):
     question = _normalize_text(question_text)
     lowered_question = question.lower()
     option_clarity_score = _estimate_dictionary_option_clarity_score(options)
-    ambiguity_resolved_by_options = option_clarity_score >= 7.0
+    ambiguity_resolved_by_options = _has_concrete_time_frequency_options(options)
 
     detected_terms = []
     term_assessments = []

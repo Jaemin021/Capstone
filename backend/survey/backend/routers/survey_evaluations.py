@@ -19,12 +19,10 @@ from services.item_construct_evaluation_service import (
 
 from services.item_quality_llm_service import (
     evaluate_item_with_dictionary_rules,
+    generate_rewrite_with_llm,
 )
-from services.item_quality_score_service import calculate_quality_score
 
 router = APIRouter(prefix="/survey-evaluations")
-SUGGESTED_REWRITE_THRESHOLD = 6.0
-RISK_STATUS_FOR_REWRITE = {"warning", "bad"}
 TERM_REPLACEMENTS = {
     "자주": "지난 2주 동안 주 3회 이상",
     "가끔": "지난 2주 동안 주 1~2회",
@@ -55,11 +53,20 @@ def _has_text(value):
     return isinstance(value, str) and value.strip() != ""
 
 
-def _needs_suggested_rewrite(score, status):
-    return (
-        isinstance(score, (int, float))
-        and score < SUGGESTED_REWRITE_THRESHOLD
-    ) or status in RISK_STATUS_FOR_REWRITE
+def _to_string_list(value):
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _has_problem(problem_categories):
+    return isinstance(problem_categories, list) and len(problem_categories) > 0
+
+
+def _quality_status(problem_categories, llm_error=None):
+    if isinstance(llm_error, str) and llm_error.strip():
+        return "error"
+    return "problem" if _has_problem(problem_categories) else "ok"
 
 
 def _replace_detected_terms(text, detected_terms):
@@ -120,31 +127,39 @@ def _evaluate_single_quality_item(survey_id: str, item_snapshot: dict):
     except Exception as error:
         llm_error = repr(error)
 
-    score = calculate_quality_score(
-        llm_result,
-        options=item_snapshot.get("option_texts"),
-        question_text=question_text,
-    )
-    problem_categories = llm_result.get("problem_categories") if isinstance(llm_result, dict) else None
-    detected_terms = llm_result.get("detected_terms") if isinstance(llm_result, dict) else None
+    problem_categories = _to_string_list(llm_result.get("problem_categories")) if isinstance(llm_result, dict) else []
+    detected_terms = _to_string_list(llm_result.get("detected_terms")) if isinstance(llm_result, dict) else []
     llm_comment = llm_result.get("llm_comment") if isinstance(llm_result, dict) else None
     suggested_rewrite = llm_result.get("suggested_rewrite") if isinstance(llm_result, dict) else None
-    status = score_status(score)
+    status = _quality_status(problem_categories, llm_error=llm_error)
+    has_problem = _has_problem(problem_categories)
 
-    if _needs_suggested_rewrite(score, status) and not _has_text(suggested_rewrite):
+    if has_problem and not _has_text(suggested_rewrite):
+        try:
+            suggested_rewrite = generate_rewrite_with_llm(
+                question_text=question_text,
+                options=item_snapshot.get("option_texts"),
+                problem_categories=problem_categories,
+                detected_terms=detected_terms,
+                llm_comment=llm_comment,
+            )
+        except Exception:
+            suggested_rewrite = ""
+
+    if has_problem and not _has_text(suggested_rewrite):
         suggested_rewrite = build_fallback_rewrite(
             question_text=question_text,
             problem_categories=problem_categories,
             detected_terms=detected_terms,
         )
 
-    if not _needs_suggested_rewrite(score, status):
+    if not has_problem:
         suggested_rewrite = ""
 
     eval_row = {
         "survey_id": survey_id,
         "item_id": item_snapshot["item_id"],
-        "quality_score": score,
+        "quality_score": None,
         "problem_categories": problem_categories,
         "detected_terms": detected_terms,
         "llm_comment": llm_comment,
@@ -155,8 +170,8 @@ def _evaluate_single_quality_item(survey_id: str, item_snapshot: dict):
         "item_id": item_snapshot["item_id"],
         "item_order": item_snapshot["item_order"],
         "question_text": question_text,
-        "quality_score": score,
         "status": status,
+        "has_problem": has_problem,
         "problem_categories": problem_categories,
         "detected_terms": detected_terms,
         "llm_comment": llm_comment,
@@ -285,20 +300,20 @@ def get_quality_results(survey_id: str):
         results = []
 
         for item, eval_row in rows:
-            score = eval_row.quality_score
-            status = score_status(score)
+            status = _quality_status(eval_row.problem_categories)
+            has_problem = _has_problem(eval_row.problem_categories)
             results.append({
                 "item_id": item.item_id,
                 "item_order": item.item_order,
                 "question_text": item.question_text,
-                "quality_score": score,
                 "status": status,
+                "has_problem": has_problem,
                 "problem_categories": eval_row.problem_categories,
                 "detected_terms": eval_row.detected_terms,
                 "llm_comment": eval_row.llm_comment,
                 "suggested_rewrite": (
                     eval_row.suggested_rewrite
-                    if _needs_suggested_rewrite(score, status)
+                    if has_problem
                     else ""
                 ),
                 "created_at": eval_row.created_at

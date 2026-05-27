@@ -108,7 +108,7 @@ function compactError(error: unknown) {
 }
 
 function summarizeQualityLlmFailures(items: QualityEvaluationItem[]) {
-  const failedItems = items.filter((item) => item.quality_score == null && item.llm_error)
+  const failedItems = items.filter((item) => Boolean(item.llm_error?.trim()))
 
   if (failedItems.length === 0) {
     return null
@@ -140,6 +140,18 @@ function statusLabel(status?: EvaluationStatus | ReliabilityStatus) {
     return '신뢰도 높음'
   }
 
+  if (status === 'ok') {
+    return 'OK'
+  }
+
+  if (status === 'problem') {
+    return '문제'
+  }
+
+  if (status === 'error') {
+    return '오류'
+  }
+
   if (status === 'warning') {
     return '주의'
   }
@@ -156,8 +168,20 @@ function statusClassName(status?: EvaluationStatus | ReliabilityStatus) {
     return 'bg-emerald-50 text-emerald-700 ring-emerald-200'
   }
 
+  if (status === 'ok') {
+    return 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+  }
+
   if (status === 'warning') {
     return 'bg-amber-50 text-amber-700 ring-amber-200'
+  }
+
+  if (status === 'problem') {
+    return 'bg-amber-50 text-amber-700 ring-amber-200'
+  }
+
+  if (status === 'error') {
+    return 'bg-rose-50 text-rose-700 ring-rose-200'
   }
 
   if (status === 'insincere' || status === 'bad') {
@@ -286,8 +310,8 @@ type ItemFeatureSnapshot = {
   question_text: string
   item_category: string
   category_tokens: string[]
-  quality_score: number | null
   quality_status: EvaluationStatus
+  quality_has_problem: boolean
   quality_problem_categories: string[]
   quality_detected_terms: string[]
   construct_embedding_score: number | null
@@ -306,7 +330,8 @@ type ItemFeatureSnapshot = {
 type CategoryFeatureSummary = {
   category: string
   item_count: number
-  quality_avg: number | null
+  quality_problem_count: number
+  quality_problem_ratio: number | null
   construct_avg: number | null
   citc_avg: number | null
   alpha_if_deleted_avg: number | null
@@ -388,24 +413,26 @@ function QualityRow({
   const hasLlmError = Boolean(item.llm_error?.trim())
   const hasLlmComment = Boolean(item.llm_comment?.trim())
   const hasSuggestedRewrite = Boolean(item.suggested_rewrite?.trim())
+  const hasProblemFlag = Boolean(item.has_problem)
   const hasProblemCategory = (item.problem_categories?.length ?? 0) > 0
   const hasDetectedTerms = (item.detected_terms?.length ?? 0) > 0
-  const isProblemStatus = item.status === 'warning' || item.status === 'bad'
+  const isProblemStatus =
+    item.status === 'problem' || item.status === 'warning' || item.status === 'bad'
+  const isProblem = hasProblemFlag || hasProblemCategory || isProblemStatus
   const canOpenDetail =
-    hasLlmError ||
-    isProblemStatus ||
-    hasLlmComment ||
-    hasSuggestedRewrite ||
-    hasProblemCategory ||
-    hasDetectedTerms
-  const problem = isProblemStatus || hasLlmError
+    isProblem &&
+    (hasLlmError || hasLlmComment || hasSuggestedRewrite || hasProblemCategory || hasDetectedTerms)
+  const cardClassName = hasLlmError
+    ? 'border-rose-200 bg-rose-50/40'
+    : isProblem
+      ? 'border-amber-200 bg-amber-50/60'
+      : 'border-slate-200 bg-white'
+  const statusText = hasLlmError ? 'error' : isProblem ? 'problem' : 'ok'
 
   return (
     <article
-      onClick={problem && canOpenDetail ? onToggle : undefined}
-      className={`rounded-lg border p-4 ${
-        problem ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-white'
-      } ${problem && canOpenDetail ? 'cursor-pointer' : ''}`}
+      onClick={canOpenDetail ? onToggle : undefined}
+      className={`rounded-lg border p-4 ${cardClassName} ${canOpenDetail ? 'cursor-pointer' : ''}`}
     >
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
@@ -415,18 +442,15 @@ function QualityRow({
             </span>
             <span
               className={`rounded-md px-2 py-1 text-xs font-black ring-1 ${statusClassName(
-                item.status,
+                statusText,
               )}`}
             >
-              {item.status}
-            </span>
-            <span className="text-sm font-black text-slate-900">
-              {item.quality_score == null ? '점수 없음' : `${item.quality_score}/10`}
+              {statusText}
             </span>
           </div>
           <p className="text-sm leading-6 text-slate-800">{item.question_text}</p>
         </div>
-        {canOpenDetail ? (
+        {isProblem && canOpenDetail ? (
           <DetailButton open={open} onClick={onToggle} label="제안본 보기" />
         ) : null}
       </div>
@@ -453,7 +477,7 @@ function QualityRow({
               </p>
             </div>
           ) : null}
-          {!item.suggested_rewrite && isProblemStatus ? (
+          {!item.suggested_rewrite && isProblem ? (
             <div className="rounded-md bg-amber-100/70 p-3 text-amber-900">
               <p className="font-black">제안본 생성 대기</p>
               <p className="mt-1 text-xs leading-5">
@@ -638,7 +662,8 @@ function CategoryFeaturePanel({ rows }: { rows: CategoryFeatureSummary[] }) {
           <tr className="text-xs font-black uppercase text-slate-500">
             <th className="border-b border-slate-200 px-3 py-2">유형</th>
             <th className="border-b border-slate-200 px-3 py-2">문항 수</th>
-            <th className="border-b border-slate-200 px-3 py-2">품질 평균</th>
+            <th className="border-b border-slate-200 px-3 py-2">품질 문제 수</th>
+            <th className="border-b border-slate-200 px-3 py-2">품질 문제 비율</th>
             <th className="border-b border-slate-200 px-3 py-2">구성 평균</th>
             <th className="border-b border-slate-200 px-3 py-2">CITC 평균</th>
             <th className="border-b border-slate-200 px-3 py-2">alpha(문항 제거 시) 평균</th>
@@ -652,7 +677,12 @@ function CategoryFeaturePanel({ rows }: { rows: CategoryFeatureSummary[] }) {
               </td>
               <td className="border-b border-slate-100 px-3 py-3">{row.item_count}</td>
               <td className="border-b border-slate-100 px-3 py-3">
-                {row.quality_avg == null ? '-' : row.quality_avg.toFixed(2)}
+                {row.quality_problem_count}
+              </td>
+              <td className="border-b border-slate-100 px-3 py-3">
+                {row.quality_problem_ratio == null
+                  ? '-'
+                  : `${(row.quality_problem_ratio * 100).toFixed(1)}%`}
               </td>
               <td className="border-b border-slate-100 px-3 py-3">
                 {row.construct_avg == null ? '-' : row.construct_avg.toFixed(2)}
@@ -695,7 +725,7 @@ function ItemFeaturePanel({ rows }: { rows: ItemFeatureSnapshot[] }) {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">
-                  품질 {row.quality_score == null ? '-' : row.quality_score.toFixed(2)}
+                  품질 {row.quality_status === 'unknown' ? '-' : row.quality_has_problem ? '문제' : 'OK'}
                 </span>
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">
                   구성 {row.construct_combined_score == null ? '-' : row.construct_combined_score.toFixed(2)}
@@ -712,8 +742,8 @@ function ItemFeaturePanel({ rows }: { rows: ItemFeatureSnapshot[] }) {
               <h4 className="text-xs font-black uppercase text-slate-600">품질 Feature</h4>
               <dl className="mt-2 space-y-1 text-sm text-slate-700">
                 <div className="flex justify-between gap-2">
-                  <dt>점수</dt>
-                  <dd>{row.quality_score == null ? '-' : row.quality_score.toFixed(2)}</dd>
+                  <dt>문제 여부</dt>
+                  <dd>{row.quality_status === 'unknown' ? '-' : row.quality_has_problem ? 'problem' : 'ok'}</dd>
                 </div>
                 <div className="flex justify-between gap-2">
                   <dt>상태</dt>
@@ -969,6 +999,7 @@ export function ResultsPage() {
           question_text: surveyItem.question_text,
           quality_score: null,
           status: 'unknown',
+          has_problem: false,
           problem_categories: null,
           detected_terms: null,
           llm_comment: null,
@@ -982,9 +1013,14 @@ export function ResultsPage() {
   )
 
   const evaluationTargetItems = qualityDisplayItems.filter((item) => item.item_role === 'normal')
-  const evaluatedQualityCount = evaluationTargetItems.filter((item) => item.quality_score != null).length
+  const evaluatedQualityCount = evaluationTargetItems.filter((item) => item.status !== 'unknown').length
   const problemQualityCount = evaluationTargetItems.filter(
-    (item) => item.status === 'warning' || item.status === 'bad',
+    (item) =>
+      Boolean(item.has_problem) ||
+      (item.problem_categories?.length ?? 0) > 0 ||
+      item.status === 'problem' ||
+      item.status === 'warning' ||
+      item.status === 'bad',
   ).length
 
   const normalSurveyItems = useMemo(
@@ -1037,8 +1073,9 @@ export function ResultsPage() {
         question_text: surveyItem.question_text,
         item_category: surveyItem.item_category?.trim() ?? '',
         category_tokens: parseItemCategoryTokens(surveyItem.item_category),
-        quality_score: quality?.quality_score ?? null,
         quality_status: quality?.status ?? 'unknown',
+        quality_has_problem:
+          Boolean(quality?.has_problem) || (quality?.problem_categories?.length ?? 0) > 0,
         quality_problem_categories: quality?.problem_categories ?? [],
         quality_detected_terms: quality?.detected_terms ?? [],
         construct_embedding_score: construct?.embedding_score ?? null,
@@ -1061,8 +1098,7 @@ export function ResultsPage() {
       string,
       {
         itemCount: number
-        qualitySum: number
-        qualityCount: number
+        qualityProblemCount: number
         constructSum: number
         constructCount: number
         citcSum: number
@@ -1077,8 +1113,7 @@ export function ResultsPage() {
       categories.forEach((category) => {
         const stats = grouped.get(category) ?? {
           itemCount: 0,
-          qualitySum: 0,
-          qualityCount: 0,
+          qualityProblemCount: 0,
           constructSum: 0,
           constructCount: 0,
           citcSum: 0,
@@ -1088,9 +1123,8 @@ export function ResultsPage() {
         }
 
         stats.itemCount += 1
-        if (row.quality_score != null) {
-          stats.qualitySum += row.quality_score
-          stats.qualityCount += 1
+        if (row.quality_has_problem) {
+          stats.qualityProblemCount += 1
         }
         if (row.construct_combined_score != null) {
           stats.constructSum += row.construct_combined_score
@@ -1113,7 +1147,8 @@ export function ResultsPage() {
       .map(([category, stats]) => ({
         category,
         item_count: stats.itemCount,
-        quality_avg: meanOrNull(stats.qualitySum, stats.qualityCount),
+        quality_problem_count: stats.qualityProblemCount,
+        quality_problem_ratio: stats.itemCount > 0 ? stats.qualityProblemCount / stats.itemCount : null,
         construct_avg: meanOrNull(stats.constructSum, stats.constructCount),
         citc_avg: meanOrNull(stats.citcSum, stats.citcCount),
         alpha_if_deleted_avg: meanOrNull(stats.alphaIfDeletedSum, stats.alphaIfDeletedCount),
@@ -1272,7 +1307,7 @@ export function ResultsPage() {
             <div>
               <h2 className="text-lg font-black text-slate-950">문항 품질 평가</h2>
               <p className="mt-1 text-sm text-slate-600">
-                일반 문항만 점수/상태를 표시하고, 역문항/함정문항은 태그로 구분합니다.
+                일반 문항만 문제 여부를 표시하고, 역문항/함정문항은 태그로 구분합니다.
                 문제 문항 카드를 클릭하면 LLM 코멘트와 제안문을 바로 확인할 수 있습니다.
               </p>
             </div>

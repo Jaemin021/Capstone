@@ -129,7 +129,9 @@ class PublicResponseCreate(ResponseCreate):
 
 class ItemQualityResult(BaseModel):
     item_id: str
-    quality_score: float
+    quality_score: Optional[float] = None
+    status: Optional[str] = None
+    has_problem: Optional[bool] = None
     problem_categories: List[str]
     detected_terms: List[str]
     suggested_rewrite: Optional[str] = None
