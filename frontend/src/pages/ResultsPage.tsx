@@ -393,6 +393,7 @@ function QualityRow({
   const isProblemStatus = item.status === 'warning' || item.status === 'bad'
   const canOpenDetail =
     hasLlmError ||
+    isProblemStatus ||
     hasLlmComment ||
     hasSuggestedRewrite ||
     hasProblemCategory ||

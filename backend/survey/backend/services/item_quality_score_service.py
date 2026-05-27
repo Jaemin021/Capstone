@@ -1,23 +1,12 @@
 import re
 
+from services.item_quality_dictionary import (
+    AMBIGUOUS_TERMS,
+    NEGATIVE_TERMS,
+    LEADING_TERMS,
+    DOUBLE_BARRELED_HINTS,
+)
 
-TERM_CATEGORY_WEIGHTS = {
-    "ambiguous": 1.0,
-    "negative": 0.8,
-    "leading": 0.9,
-    "double_barreled": 1.2,
-}
-
-PROBLEM_CATEGORY_WEIGHTS = {
-    "clarity_issue": 0.5,
-    "single_concept_issue": 0.7,
-    "answerability_issue": 0.6,
-    "neutrality_issue": 0.5,
-    "leading": 0.6,
-    "double_barreled": 0.8,
-    "ambiguous_time": 0.9,
-    "negative_wording": 0.7,
-}
 
 CLEAR_OPTION_HINTS = (
     "전혀",
@@ -45,6 +34,11 @@ VAGUE_OPTION_HINTS = (
 LOW_EXTREME_HINTS = ("전혀", "아니다", "없다", "거의 없다", "동의하지 않는다")
 HIGH_EXTREME_HINTS = ("매우", "항상", "확실히", "동의한다", "그렇다")
 
+AMBIGUOUS_TERM_SET = {term.strip().lower() for term in AMBIGUOUS_TERMS if str(term).strip()}
+NEGATIVE_TERM_SET = {term.strip().lower() for term in NEGATIVE_TERMS if str(term).strip()}
+LEADING_TERM_SET = {term.strip().lower() for term in LEADING_TERMS if str(term).strip()}
+DOUBLE_BARRELED_HINT_SET = {term.strip().lower() for term in DOUBLE_BARRELED_HINTS if str(term).strip()}
+
 
 def safe_float(value, default=0.0):
     if value is None:
@@ -52,8 +46,6 @@ def safe_float(value, default=0.0):
 
     if isinstance(value, str):
         text = value.strip()
-
-        # Handles values like "8/10", "8.5점", "score: 7"
         match = re.search(r"-?\d+(?:\.\d+)?", text)
         if match:
             try:
@@ -85,38 +77,37 @@ def _to_lower_set(value):
     }
 
 
-def _calculate_dictionary_penalty(llm):
-    if not isinstance(llm, dict):
-        return 0.0
+def _categorize_dictionary_term(term):
+    lowered = str(term).strip().lower()
+    if not lowered:
+        return None
+    if lowered in AMBIGUOUS_TERM_SET:
+        return "ambiguous_time"
+    if lowered in NEGATIVE_TERM_SET:
+        return "negative_wording"
+    if lowered in LEADING_TERM_SET:
+        return "leading"
+    if lowered in DOUBLE_BARRELED_HINT_SET:
+        return "double_barreled"
+    return None
 
-    penalty = 0.0
-    problem_assessment_count = 0
 
-    for row in _to_list(llm.get("term_assessments")):
-        if not isinstance(row, dict):
-            continue
+def _extract_question_term_categories(question_text):
+    categories = set()
+    lowered_question = str(question_text or "").strip().lower()
+    if not lowered_question:
+        return categories
 
-        context_effect = str(row.get("context_effect", "")).strip().lower()
-        if context_effect != "problem":
-            continue
+    if any(term in lowered_question for term in AMBIGUOUS_TERM_SET):
+        categories.add("ambiguous_time")
+    if any(term in lowered_question for term in NEGATIVE_TERM_SET):
+        categories.add("negative_wording")
+    if any(term in lowered_question for term in LEADING_TERM_SET):
+        categories.add("leading")
+    if any(term in lowered_question for term in DOUBLE_BARRELED_HINT_SET):
+        categories.add("double_barreled")
 
-        category = str(row.get("category", "")).strip().lower()
-        severity = safe_float(row.get("severity"), default=1.0)
-        severity = clamp(severity, 0.5, 2.0)
-        weight = TERM_CATEGORY_WEIGHTS.get(category, 0.9)
-
-        penalty += weight * severity
-        problem_assessment_count += 1
-
-    categories = _to_lower_set(llm.get("problem_categories"))
-    for category in categories:
-        penalty += PROBLEM_CATEGORY_WEIGHTS.get(category, 0.5)
-
-    detected_terms_count = len(_to_list(llm.get("detected_terms")))
-    if detected_terms_count > 0 and (problem_assessment_count > 0 or len(categories) > 0):
-        penalty += min(detected_terms_count, 5) * 0.30
-
-    return min(penalty, 5.0)
+    return categories
 
 
 def _is_clear_option(text):
@@ -170,84 +161,90 @@ def _estimate_option_clarity(options, llm_option_clarity_score=None):
     return clamp((local_clarity * 0.6) + (llm_clarity * 0.4), 0.0, 1.0)
 
 
-def _needs_option_recovery(llm):
-    if not isinstance(llm, dict):
-        return False
+def _extract_issue_categories(llm, question_text):
+    categories = _to_lower_set(llm.get("problem_categories")) if isinstance(llm, dict) else set()
+    has_term_assessments = False
 
-    categories = _to_lower_set(llm.get("problem_categories"))
-    if categories.intersection({"ambiguous_time", "answerability_issue", "clarity_issue"}):
-        return True
-
-    for row in _to_list(llm.get("term_assessments")):
-        if not isinstance(row, dict):
-            continue
-
-        category = str(row.get("category", "")).strip().lower()
-        context_effect = str(row.get("context_effect", "")).strip().lower()
-        if category == "ambiguous" and context_effect == "problem":
-            return True
-
-    return False
-
-
-def _calculate_option_adjustment(llm, options):
-    llm_option_clarity_score = None
     if isinstance(llm, dict):
-        parsed = safe_float(llm.get("option_clarity_score"), default=None)
-        if parsed is not None:
-            llm_option_clarity_score = clamp(parsed, 0.0, 10.0)
+        term_assessments = _to_list(llm.get("term_assessments"))
+        has_term_assessments = len(term_assessments) > 0
 
-    clarity = _estimate_option_clarity(options, llm_option_clarity_score=llm_option_clarity_score)
-    if not _needs_option_recovery(llm):
-        return 0.0
+        for row in term_assessments:
+            if not isinstance(row, dict):
+                continue
+            context_effect = str(row.get("context_effect", "")).strip().lower()
+            if context_effect != "problem":
+                continue
+            term_category = str(row.get("category", "")).strip().lower()
+            if term_category == "ambiguous":
+                categories.add("ambiguous_time")
+            elif term_category == "negative":
+                categories.add("negative_wording")
+            elif term_category == "leading":
+                categories.add("leading")
+            elif term_category == "double_barreled":
+                categories.add("double_barreled")
 
-    recovery_bonus = max(0.0, clarity - 0.50) * 3.6
-    unresolved_ambiguity_penalty = max(0.0, 0.45 - clarity) * 1.8
-    return recovery_bonus - unresolved_ambiguity_penalty
+        # term_assessments가 있으면 resolved/acceptable 여부를 이미 담고 있으므로
+        # detected_terms만으로는 추가 감점 카테고리를 붙이지 않는다.
+        if not has_term_assessments:
+            for term in _to_list(llm.get("detected_terms")):
+                mapped = _categorize_dictionary_term(term)
+                if mapped:
+                    categories.add(mapped)
+
+    # 평가 결과가 충분치 않을 때만 질문 텍스트 기반 보수적 감지를 사용한다.
+    if not has_term_assessments and len(categories) == 0:
+        categories.update(_extract_question_term_categories(question_text))
+    return categories
 
 
-def calculate_quality_score(llm, options=None):
+def calculate_quality_score(llm, options=None, question_text=""):
     if llm is None:
         return None
 
-    clarity = safe_float(llm.get("clarity", llm.get("clarity_score")))
-    single_concept = safe_float(llm.get("single_concept", llm.get("single_concept_score")))
-    answerability = safe_float(llm.get("answerability", llm.get("answerability_score")))
-    neutrality = safe_float(llm.get("neutrality", llm.get("neutrality_score")))
-    llm_overall = safe_float(llm.get("overall_quality_score"), default=None)
-
-    subscores = [clarity, single_concept, answerability, neutrality]
-    if all(score <= 1.5 for score in subscores):
-        clarity *= 10
-        single_concept *= 10
-        answerability *= 10
-        neutrality *= 10
-
-    clarity = clamp(clarity, 0.0, 10.0)
-    single_concept = clamp(single_concept, 0.0, 10.0)
-    answerability = clamp(answerability, 0.0, 10.0)
-    neutrality = clamp(neutrality, 0.0, 10.0)
-
-    # Guard against invalid parsed responses becoming all-zero silently.
-    if all(score == 0 for score in [clarity, single_concept, answerability, neutrality]):
-        return None
-
-    weighted_subscore = (
-        clarity * 0.40 +
-        single_concept * 0.30 +
-        answerability * 0.20 +
-        neutrality * 0.10
+    option_clarity = _estimate_option_clarity(
+        options=options,
+        llm_option_clarity_score=safe_float(llm.get("option_clarity_score"), default=None),
     )
 
-    if llm_overall is None:
-        score = weighted_subscore
-    else:
-        llm_overall = clamp(llm_overall, 0.0, 10.0)
-        score = weighted_subscore * 0.75 + llm_overall * 0.25
+    issue_categories = _extract_issue_categories(llm, question_text)
+    has_issue = len(issue_categories) > 0
 
-    dictionary_penalty = _calculate_dictionary_penalty(llm)
-    option_adjustment = _calculate_option_adjustment(llm, options)
+    # Rule-first scoring:
+    # - no issue expression: good
+    # - issue expression exists: warning/bad based on severity
+    # - ambiguous-time issue can recover partially when options are explicit
+    if not has_issue:
+        return 9.2
 
-    score = score - dictionary_penalty + option_adjustment
-    # Keep final score bounded for downstream status and UI handling.
-    return round(clamp(score, 0.0, 10.0), 3)
+    severe_issue_categories = {
+        "double_barreled",
+        "single_concept_issue",
+        "leading",
+        "negative_wording",
+    }
+
+    ambiguous_issue_categories = {
+        "ambiguous_time",
+        "answerability_issue",
+        "clarity_issue",
+    }
+
+    has_severe_issue = len(issue_categories.intersection(severe_issue_categories)) > 0
+    is_ambiguous_family_only = issue_categories.issubset(ambiguous_issue_categories)
+
+    if has_severe_issue:
+        return 5.9
+
+    if is_ambiguous_family_only:
+        if option_clarity >= 0.80:
+            return 6.9
+        if option_clarity >= 0.65:
+            return 6.4
+        return 5.9
+
+    if option_clarity >= 0.80:
+        return 6.6
+
+    return 6.1

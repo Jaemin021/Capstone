@@ -317,3 +317,198 @@ def generate_rewrite_with_llm(question_text, options, problem_categories=None, d
     )
 
     return _clean_rewrite_text(content)
+
+
+def _normalize_text(text):
+    return re.sub(r"\s+", " ", str(text or "").strip())
+
+
+def _is_time_or_frequency_anchor(text):
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+
+    if re.search(r"\d+\s*(회|번|일|주|개월|달|월|년|시간|분)", lowered):
+        return True
+
+    anchor_hints = (
+        "지난",
+        "최근",
+        "주당",
+        "매일",
+        "거의 매일",
+        "전혀",
+        "항상",
+        "주 1회",
+        "주 2",
+        "주 3",
+        "2주",
+        "4주",
+    )
+    return any(hint in lowered for hint in anchor_hints)
+
+
+def _estimate_dictionary_option_clarity_score(options):
+    option_texts = [str(option).strip() for option in (options or []) if str(option).strip()]
+    if not option_texts:
+        return 5.0
+
+    anchor_count = sum(1 for option in option_texts if _is_time_or_frequency_anchor(option))
+    anchor_ratio = anchor_count / len(option_texts)
+
+    has_extreme_low = any("전혀" in option or "없음" in option or "아니다" in option for option in option_texts)
+    has_extreme_high = any("항상" in option or "매우" in option or "거의 매일" in option for option in option_texts)
+    extreme_bonus = 0.15 if has_extreme_low and has_extreme_high else 0.0
+
+    score = (anchor_ratio + extreme_bonus) * 10.0
+    return max(0.0, min(10.0, round(score, 3)))
+
+
+def _rewrite_by_dictionary_rules(question_text, unresolved_terms, unresolved_categories):
+    rewritten = _normalize_text(question_text)
+    rewritten = re.sub(r"[.?!]+$", "", rewritten).strip()
+
+    leading_terms = ["당연히", "반드시", "꼭", "확실히"]
+    for term in leading_terms:
+        rewritten = rewritten.replace(term, "")
+
+    negative_map = {
+        "불편하지 않다": "편리하다",
+        "만족하지 않는다": "만족한다",
+        "없다": "있다",
+        "못하다": "할 수 있다",
+    }
+    for before, after in negative_map.items():
+        if before in rewritten:
+            rewritten = rewritten.replace(before, after)
+
+    ambiguous_map = {
+        "자주": "지난 2주 동안 주 3회 이상",
+        "가끔": "지난 2주 동안 주 1~2회",
+        "보통": "중간 수준(주 2~3회)",
+        "대체로": "대부분의 경우",
+        "적당히": "명확한 기준에 따라",
+        "충분히": "기준을 충족할 만큼",
+        "조금": "낮은 수준으로",
+        "많이": "높은 수준으로",
+    }
+    for term in unresolved_terms:
+        replacement = ambiguous_map.get(term)
+        if replacement and term in rewritten:
+            rewritten = rewritten.replace(term, replacement, 1)
+
+    if "double_barreled" in unresolved_categories or "single_concept_issue" in unresolved_categories:
+        rewritten = re.split(r"(그리고|및|또는|거나)", rewritten, maxsplit=1)[0].strip()
+
+    rewritten = re.sub(r"\s+", " ", rewritten).strip()
+    if not rewritten:
+        rewritten = _normalize_text(question_text)
+
+    if rewritten and rewritten[-1] not in {"?", "."}:
+        rewritten += "?"
+
+    return rewritten
+
+
+def evaluate_item_with_dictionary_rules(question_text, options):
+    question = _normalize_text(question_text)
+    lowered_question = question.lower()
+    option_clarity_score = _estimate_dictionary_option_clarity_score(options)
+    ambiguity_resolved_by_options = option_clarity_score >= 7.0
+
+    detected_terms = []
+    term_assessments = []
+    unresolved_categories = set()
+    unresolved_terms = []
+
+    def record_term(term, category, resolved):
+        nonlocal detected_terms, term_assessments, unresolved_categories, unresolved_terms
+
+        detected_terms.append(term)
+        context_effect = "acceptable" if resolved else "problem"
+        term_assessments.append({
+            "term": term,
+            "category": category,
+            "context_effect": context_effect,
+            "severity": 0 if resolved else 2,
+            "reason": (
+                "보기에 구체 기준이 있어 해석 위험이 완화되었습니다."
+                if resolved
+                else "문항 단독 해석 시 응답자마다 의미 기준이 달라질 수 있습니다."
+            ),
+        })
+        if not resolved:
+            unresolved_terms.append(term)
+
+    for term in AMBIGUOUS_TERMS:
+        t = str(term).strip()
+        if t and t in lowered_question:
+            resolved = ambiguity_resolved_by_options
+            record_term(t, "ambiguous", resolved)
+            if not resolved:
+                unresolved_categories.add("ambiguous_time")
+                unresolved_categories.add("answerability_issue")
+
+    for term in NEGATIVE_TERMS:
+        t = str(term).strip()
+        if t and t in lowered_question:
+            record_term(t, "negative", False)
+            unresolved_categories.add("negative_wording")
+            unresolved_categories.add("clarity_issue")
+
+    for term in LEADING_TERMS:
+        t = str(term).strip()
+        if t and t in lowered_question:
+            record_term(t, "leading", False)
+            unresolved_categories.add("leading")
+            unresolved_categories.add("neutrality_issue")
+
+    for term in DOUBLE_BARRELED_HINTS:
+        t = str(term).strip()
+        if t and t in lowered_question:
+            record_term(t, "double_barreled", False)
+            unresolved_categories.add("double_barreled")
+            unresolved_categories.add("single_concept_issue")
+
+    # 중복 제거하면서 순서 유지
+    dedup_detected_terms = []
+    seen_terms = set()
+    for term in detected_terms:
+        if term in seen_terms:
+            continue
+        seen_terms.add(term)
+        dedup_detected_terms.append(term)
+
+    if unresolved_categories:
+        llm_comment = (
+            "사전 기반 문제표현이 확인되어 문항 해석 위험이 있습니다. "
+            "해당 표현을 제거하거나 구체 기준으로 바꾼 수정 문장을 제안합니다."
+        )
+        suggested_rewrite = _rewrite_by_dictionary_rules(
+            question_text=question,
+            unresolved_terms=unresolved_terms,
+            unresolved_categories=unresolved_categories,
+        )
+    else:
+        if dedup_detected_terms:
+            llm_comment = "사전 표현은 포함되어 있으나 보기가 의미 기준을 충분히 고정해 해석 위험이 완화되었습니다."
+        else:
+            llm_comment = "사전에 정의한 문제표현이 문항에서 확인되지 않았습니다."
+        suggested_rewrite = ""
+
+    return {
+        "problem_categories": sorted(unresolved_categories),
+        "detected_terms": dedup_detected_terms,
+        "term_assessments": term_assessments,
+        "option_clarity_score": option_clarity_score,
+        "option_recovery": {
+            "applied": bool(ambiguity_resolved_by_options and "ambiguous_time" not in unresolved_categories),
+            "reason": (
+                "보기의 빈도/시간 기준이 구체적이라 모호어 위험이 완화되었습니다."
+                if ambiguity_resolved_by_options
+                else "보기에 구체 빈도/시간 기준이 부족해 모호어 위험이 남아 있습니다."
+            ),
+        },
+        "llm_comment": llm_comment,
+        "suggested_rewrite": suggested_rewrite,
+    }

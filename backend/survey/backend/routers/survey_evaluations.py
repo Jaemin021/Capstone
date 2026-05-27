@@ -18,8 +18,7 @@ from services.item_construct_evaluation_service import (
 )
 
 from services.item_quality_llm_service import (
-    evaluate_item_with_llm,
-    generate_rewrite_with_llm,
+    evaluate_item_with_dictionary_rules,
 )
 from services.item_quality_score_service import calculate_quality_score
 
@@ -114,31 +113,23 @@ def _evaluate_single_quality_item(survey_id: str, item_snapshot: dict):
     llm_error = None
 
     try:
-        llm_result = evaluate_item_with_llm(
+        llm_result = evaluate_item_with_dictionary_rules(
             question_text,
             item_snapshot["option_texts"]
         )
     except Exception as error:
         llm_error = repr(error)
 
-    score = calculate_quality_score(llm_result, options=item_snapshot.get("option_texts"))
+    score = calculate_quality_score(
+        llm_result,
+        options=item_snapshot.get("option_texts"),
+        question_text=question_text,
+    )
     problem_categories = llm_result.get("problem_categories") if isinstance(llm_result, dict) else None
     detected_terms = llm_result.get("detected_terms") if isinstance(llm_result, dict) else None
     llm_comment = llm_result.get("llm_comment") if isinstance(llm_result, dict) else None
     suggested_rewrite = llm_result.get("suggested_rewrite") if isinstance(llm_result, dict) else None
     status = score_status(score)
-
-    if _needs_suggested_rewrite(score, status) and not _has_text(suggested_rewrite):
-        try:
-            suggested_rewrite = generate_rewrite_with_llm(
-                question_text=question_text,
-                options=item_snapshot.get("option_texts"),
-                problem_categories=problem_categories,
-                detected_terms=detected_terms,
-                llm_comment=llm_comment,
-            )
-        except Exception:
-            suggested_rewrite = ""
 
     if _needs_suggested_rewrite(score, status) and not _has_text(suggested_rewrite):
         suggested_rewrite = build_fallback_rewrite(
