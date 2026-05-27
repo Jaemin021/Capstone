@@ -167,8 +167,6 @@ function statusClassName(status?: EvaluationStatus | ReliabilityStatus) {
   return 'bg-slate-100 text-slate-600 ring-slate-200'
 }
 
-const SUGGESTED_REWRITE_THRESHOLD = 6
-
 function DetailButton({
   open,
   onClick,
@@ -182,7 +180,10 @@ function DetailButton({
     <button
       type="button"
       className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-      onClick={onClick}
+      onClick={(event) => {
+        event.stopPropagation()
+        onClick()
+      }}
     >
       {open ? '접기' : label}
       <ChevronDown size={16} className={open ? 'rotate-180 transition' : 'transition'} />
@@ -387,21 +388,23 @@ function QualityRow({
   const hasLlmError = Boolean(item.llm_error?.trim())
   const hasLlmComment = Boolean(item.llm_comment?.trim())
   const hasSuggestedRewrite = Boolean(item.suggested_rewrite?.trim())
-  const numericScore =
-    typeof item.quality_score === 'number' && Number.isFinite(item.quality_score)
-      ? item.quality_score
-      : null
-  const allowSuggestionByScore =
-    numericScore != null && numericScore < SUGGESTED_REWRITE_THRESHOLD
+  const hasProblemCategory = (item.problem_categories?.length ?? 0) > 0
+  const hasDetectedTerms = (item.detected_terms?.length ?? 0) > 0
+  const isProblemStatus = item.status === 'warning' || item.status === 'bad'
   const canOpenDetail =
-    hasLlmError || (allowSuggestionByScore && (hasLlmComment || hasSuggestedRewrite))
-  const problem = item.status === 'warning' || item.status === 'bad' || hasLlmError
+    hasLlmError ||
+    hasLlmComment ||
+    hasSuggestedRewrite ||
+    hasProblemCategory ||
+    hasDetectedTerms
+  const problem = isProblemStatus || hasLlmError
 
   return (
     <article
+      onClick={problem && canOpenDetail ? onToggle : undefined}
       className={`rounded-lg border p-4 ${
         problem ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-white'
-      }`}
+      } ${problem && canOpenDetail ? 'cursor-pointer' : ''}`}
     >
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
@@ -446,6 +449,14 @@ function QualityRow({
               <p className="font-black text-slate-900">제안본</p>
               <p className="mt-1 rounded-md bg-teal-50 p-3 font-semibold text-teal-900">
                 {item.suggested_rewrite}
+              </p>
+            </div>
+          ) : null}
+          {!item.suggested_rewrite && isProblemStatus ? (
+            <div className="rounded-md bg-amber-100/70 p-3 text-amber-900">
+              <p className="font-black">제안본 생성 대기</p>
+              <p className="mt-1 text-xs leading-5">
+                문제 문항으로 판정되었지만 제안본이 비어 있습니다. 품질 평가를 다시 실행해 주세요.
               </p>
             </div>
           ) : null}
@@ -1261,7 +1272,7 @@ export function ResultsPage() {
               <h2 className="text-lg font-black text-slate-950">문항 품질 평가</h2>
               <p className="mt-1 text-sm text-slate-600">
                 일반 문항만 점수/상태를 표시하고, 역문항/함정문항은 태그로 구분합니다.
-                제안본은 점수가 {SUGGESTED_REWRITE_THRESHOLD}점 미만인 문항에서만 표시됩니다.
+                문제 문항 카드를 클릭하면 LLM 코멘트와 제안문을 바로 확인할 수 있습니다.
               </p>
             </div>
           </div>

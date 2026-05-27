@@ -17,11 +17,25 @@ from services.item_construct_evaluation_service import (
     sanitize_construct_llm_features,
 )
 
-from services.item_quality_llm_service import evaluate_item_with_llm
+from services.item_quality_llm_service import (
+    evaluate_item_with_llm,
+    generate_rewrite_with_llm,
+)
 from services.item_quality_score_service import calculate_quality_score
 
 router = APIRouter(prefix="/survey-evaluations")
 SUGGESTED_REWRITE_THRESHOLD = 6.0
+RISK_STATUS_FOR_REWRITE = {"warning", "bad"}
+TERM_REPLACEMENTS = {
+    "자주": "지난 2주 동안 주 3회 이상",
+    "가끔": "지난 2주 동안 주 1~2회",
+    "보통": "중간 수준(주 2~3회)",
+    "대체로": "대부분의 경우",
+    "적당히": "명확한 기준에 맞게",
+    "충분히": "기준을 충족할 만큼",
+    "조금": "낮은 수준으로",
+    "많이": "높은 수준으로",
+}
 
 
 def now_str():
@@ -42,28 +56,45 @@ def _has_text(value):
     return isinstance(value, str) and value.strip() != ""
 
 
-def _can_show_suggested_rewrite(score):
-    return isinstance(score, (int, float)) and score < SUGGESTED_REWRITE_THRESHOLD
+def _needs_suggested_rewrite(score, status):
+    return (
+        isinstance(score, (int, float))
+        and score < SUGGESTED_REWRITE_THRESHOLD
+    ) or status in RISK_STATUS_FOR_REWRITE
 
 
-def build_fallback_rewrite(question_text, problem_categories):
+def _replace_detected_terms(text, detected_terms):
+    rewritten = text
+    for term in (detected_terms or []):
+        key = str(term).strip()
+        if not key:
+            continue
+        replacement = TERM_REPLACEMENTS.get(key)
+        if replacement and key in rewritten:
+            rewritten = rewritten.replace(key, replacement, 1)
+    return rewritten
+
+
+def build_fallback_rewrite(question_text, problem_categories, detected_terms):
     base_question = (question_text or "").strip()
     if not base_question:
         return ""
 
     categories = set(problem_categories or [])
-    normalized = re.sub(r"\s+", " ", base_question)
+    normalized = re.sub(r"\s+", " ", base_question).strip()
     normalized = re.sub(r"[.?!]+$", "", normalized).strip()
+    normalized = _replace_detected_terms(normalized, detected_terms)
+
+    if "double_barreled" in categories or "single_concept_issue" in categories:
+        normalized = re.split(r"(그리고|및|또는|거나)", normalized, maxsplit=1)[0].strip()
 
     prefix = ""
     if "ambiguous_time" in categories or "answerability_issue" in categories:
         prefix = "지난 2주 동안, "
-    elif "double_barreled" in categories or "single_concept_issue" in categories:
-        prefix = "한 가지 행동 기준으로, "
 
     proposal = f"{prefix}{normalized}".strip()
-    if not proposal.endswith("."):
-        proposal = proposal + "."
+    if proposal and proposal[-1] not in ["?", "."]:
+        proposal = proposal + "?"
 
     return proposal
 
@@ -90,20 +121,33 @@ def _evaluate_single_quality_item(survey_id: str, item_snapshot: dict):
     except Exception as error:
         llm_error = repr(error)
 
-    score = calculate_quality_score(llm_result)
+    score = calculate_quality_score(llm_result, options=item_snapshot.get("option_texts"))
     problem_categories = llm_result.get("problem_categories") if isinstance(llm_result, dict) else None
     detected_terms = llm_result.get("detected_terms") if isinstance(llm_result, dict) else None
     llm_comment = llm_result.get("llm_comment") if isinstance(llm_result, dict) else None
     suggested_rewrite = llm_result.get("suggested_rewrite") if isinstance(llm_result, dict) else None
     status = score_status(score)
 
-    if status in ["warning", "bad"] and not _has_text(suggested_rewrite):
+    if _needs_suggested_rewrite(score, status) and not _has_text(suggested_rewrite):
+        try:
+            suggested_rewrite = generate_rewrite_with_llm(
+                question_text=question_text,
+                options=item_snapshot.get("option_texts"),
+                problem_categories=problem_categories,
+                detected_terms=detected_terms,
+                llm_comment=llm_comment,
+            )
+        except Exception:
+            suggested_rewrite = ""
+
+    if _needs_suggested_rewrite(score, status) and not _has_text(suggested_rewrite):
         suggested_rewrite = build_fallback_rewrite(
             question_text=question_text,
             problem_categories=problem_categories,
+            detected_terms=detected_terms,
         )
 
-    if not _can_show_suggested_rewrite(score):
+    if not _needs_suggested_rewrite(score, status):
         suggested_rewrite = ""
 
     eval_row = {
@@ -250,18 +294,20 @@ def get_quality_results(survey_id: str):
         results = []
 
         for item, eval_row in rows:
+            score = eval_row.quality_score
+            status = score_status(score)
             results.append({
                 "item_id": item.item_id,
                 "item_order": item.item_order,
                 "question_text": item.question_text,
-                "quality_score": eval_row.quality_score,
-                "status": score_status(eval_row.quality_score),
+                "quality_score": score,
+                "status": status,
                 "problem_categories": eval_row.problem_categories,
                 "detected_terms": eval_row.detected_terms,
                 "llm_comment": eval_row.llm_comment,
                 "suggested_rewrite": (
                     eval_row.suggested_rewrite
-                    if _can_show_suggested_rewrite(eval_row.quality_score)
+                    if _needs_suggested_rewrite(score, status)
                     else ""
                 ),
                 "created_at": eval_row.created_at
