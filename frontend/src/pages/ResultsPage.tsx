@@ -412,7 +412,6 @@ function QualityRow({
 
   const hasLlmError = Boolean(item.llm_error?.trim())
   const hasLlmComment = Boolean(item.llm_comment?.trim())
-  const hasSuggestedRewrite = Boolean(item.suggested_rewrite?.trim())
   const hasProblemFlag = Boolean(item.has_problem)
   const hasProblemCategory = (item.problem_categories?.length ?? 0) > 0
   const hasDetectedTerms = (item.detected_terms?.length ?? 0) > 0
@@ -421,7 +420,7 @@ function QualityRow({
   const isProblem = hasProblemFlag || hasProblemCategory || isProblemStatus
   const canOpenDetail =
     isProblem &&
-    (hasLlmError || hasLlmComment || hasSuggestedRewrite || hasProblemCategory || hasDetectedTerms)
+    (hasLlmError || hasLlmComment || hasProblemCategory || hasDetectedTerms)
   const cardClassName = hasLlmError
     ? 'border-rose-200 bg-rose-50/40'
     : isProblem
@@ -451,7 +450,7 @@ function QualityRow({
           <p className="text-sm leading-6 text-slate-800">{item.question_text}</p>
         </div>
         {isProblem && canOpenDetail ? (
-          <DetailButton open={open} onClick={onToggle} label="제안본 보기" />
+          <DetailButton open={open} onClick={onToggle} />
         ) : null}
       </div>
 
@@ -467,22 +466,6 @@ function QualityRow({
             <div>
               <p className="font-black text-slate-900">LLM 코멘트</p>
               <p className="mt-1">{item.llm_comment}</p>
-            </div>
-          ) : null}
-          {item.suggested_rewrite ? (
-            <div>
-              <p className="font-black text-slate-900">제안본</p>
-              <p className="mt-1 rounded-md bg-teal-50 p-3 font-semibold text-teal-900">
-                {item.suggested_rewrite}
-              </p>
-            </div>
-          ) : null}
-          {!item.suggested_rewrite && isProblem ? (
-            <div className="rounded-md bg-amber-100/70 p-3 text-amber-900">
-              <p className="font-black">제안본 생성 대기</p>
-              <p className="mt-1 text-xs leading-5">
-                문제 문항으로 판정되었지만 제안본이 비어 있습니다. 품질 평가를 다시 실행해 주세요.
-              </p>
             </div>
           ) : null}
         </div>
