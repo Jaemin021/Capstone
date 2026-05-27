@@ -1,7 +1,10 @@
 # backend/routers/survey_evaluations.py
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import re
+import time
 from fastapi import APIRouter
 from database import SessionLocal
 import models
@@ -15,11 +18,22 @@ from services.item_construct_evaluation_service import (
     sanitize_construct_llm_features,
 )
 
-from services.item_quality_llm_service import evaluate_item_with_llm
-from services.item_quality_score_service import calculate_quality_score
+from services.item_quality_llm_service import (
+    evaluate_item_with_dictionary_rules,
+    generate_rewrite_with_llm,
+)
 
 router = APIRouter(prefix="/survey-evaluations")
-SUGGESTED_REWRITE_THRESHOLD = 6.0
+TERM_REPLACEMENTS = {
+    "자주": "지난 2주 동안 주 3회 이상",
+    "가끔": "지난 2주 동안 주 1~2회",
+    "보통": "중간 수준(주 2~3회)",
+    "대체로": "대부분의 경우",
+    "적당히": "명확한 기준에 맞게",
+    "충분히": "기준을 충족할 만큼",
+    "조금": "낮은 수준으로",
+    "많이": "높은 수준으로",
+}
 
 
 def now_str():
@@ -40,30 +54,190 @@ def _has_text(value):
     return isinstance(value, str) and value.strip() != ""
 
 
-def _can_show_suggested_rewrite(score):
-    return isinstance(score, (int, float)) and score < SUGGESTED_REWRITE_THRESHOLD
+def _to_string_list(value):
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
-def build_fallback_rewrite(question_text, problem_categories):
+def _has_problem(problem_categories):
+    return isinstance(problem_categories, list) and len(problem_categories) > 0
+
+
+def _quality_status(problem_categories, llm_error=None):
+    if isinstance(llm_error, str) and llm_error.strip():
+        return "error"
+    return "problem" if _has_problem(problem_categories) else "ok"
+
+
+def _replace_detected_terms(text, detected_terms):
+    rewritten = text
+    for term in (detected_terms or []):
+        key = str(term).strip()
+        if not key:
+            continue
+        replacement = TERM_REPLACEMENTS.get(key)
+        if replacement and key in rewritten:
+            rewritten = rewritten.replace(key, replacement, 1)
+    return rewritten
+
+
+def build_fallback_rewrite(question_text, problem_categories, detected_terms):
     base_question = (question_text or "").strip()
     if not base_question:
         return ""
 
     categories = set(problem_categories or [])
-    normalized = re.sub(r"\s+", " ", base_question)
+    normalized = re.sub(r"\s+", " ", base_question).strip()
     normalized = re.sub(r"[.?!]+$", "", normalized).strip()
+    normalized = _replace_detected_terms(normalized, detected_terms)
+
+    if "double_barreled" in categories or "single_concept_issue" in categories:
+        normalized = re.split(r"(그리고|및|또는|거나)", normalized, maxsplit=1)[0].strip()
 
     prefix = ""
     if "ambiguous_time" in categories or "answerability_issue" in categories:
         prefix = "지난 2주 동안, "
-    elif "double_barreled" in categories or "single_concept_issue" in categories:
-        prefix = "한 가지 행동 기준으로, "
 
     proposal = f"{prefix}{normalized}".strip()
-    if not proposal.endswith("."):
-        proposal = proposal + "."
+    if proposal and proposal[-1] not in ["?", "."]:
+        proposal = proposal + "?"
 
     return proposal
+
+
+def _parse_quality_worker_count():
+    # Stability-first default: keep concurrency low to avoid transient external failures.
+    raw = os.getenv("QUALITY_LLM_MAX_WORKERS", "2").strip()
+    try:
+        parsed = int(raw)
+    except Exception:
+        return 2
+    return max(1, min(parsed, 12))
+
+
+def _parse_quality_eval_retries():
+    raw = os.getenv("QUALITY_EVAL_MAX_RETRIES", "2").strip()
+    try:
+        parsed = int(raw)
+    except Exception:
+        return 2
+    return max(0, min(parsed, 6))
+
+
+def _parse_quality_eval_retry_delay_ms():
+    raw = os.getenv("QUALITY_EVAL_RETRY_DELAY_MS", "200").strip()
+    try:
+        parsed = int(raw)
+    except Exception:
+        return 200
+    return max(0, min(parsed, 5000))
+
+
+def _default_quality_result_from_rules():
+    return {
+        "problem_categories": [],
+        "detected_terms": [],
+        "llm_comment": "자동 품질 평가 중 일시 오류가 발생해 기본 결과로 대체했습니다.",
+        "suggested_rewrite": "",
+    }
+
+
+def _evaluate_single_quality_item(survey_id: str, item_snapshot: dict):
+    question_text = item_snapshot["question_text"]
+    llm_result = None
+    llm_error = None
+    recovered_error = None
+
+    max_retries = _parse_quality_eval_retries()
+    retry_delay_sec = _parse_quality_eval_retry_delay_ms() / 1000.0
+
+    for attempt in range(max_retries + 1):
+        try:
+            llm_result = evaluate_item_with_dictionary_rules(
+                question_text,
+                item_snapshot["option_texts"]
+            )
+            break
+        except Exception as error:
+            llm_error = repr(error)
+            if attempt >= max_retries:
+                break
+            if retry_delay_sec > 0:
+                time.sleep(retry_delay_sec)
+
+    if llm_result is None:
+        # Hard-fallback so the entire evaluation can still complete.
+        llm_result = _default_quality_result_from_rules()
+        recovered_error = llm_error
+        llm_error = None
+
+    problem_categories = _to_string_list(llm_result.get("problem_categories")) if isinstance(llm_result, dict) else []
+    detected_terms = _to_string_list(llm_result.get("detected_terms")) if isinstance(llm_result, dict) else []
+    llm_comment = llm_result.get("llm_comment") if isinstance(llm_result, dict) else None
+    suggested_rewrite = llm_result.get("suggested_rewrite") if isinstance(llm_result, dict) else None
+    status = _quality_status(problem_categories, llm_error=llm_error)
+    has_problem = _has_problem(problem_categories)
+
+    if has_problem and not _has_text(suggested_rewrite):
+        try:
+            suggested_rewrite = generate_rewrite_with_llm(
+                question_text=question_text,
+                options=item_snapshot.get("option_texts"),
+                problem_categories=problem_categories,
+                detected_terms=detected_terms,
+                llm_comment=llm_comment,
+            )
+        except Exception:
+            suggested_rewrite = ""
+
+    if has_problem and not _has_text(suggested_rewrite):
+        suggested_rewrite = build_fallback_rewrite(
+            question_text=question_text,
+            problem_categories=problem_categories,
+            detected_terms=detected_terms,
+        )
+
+    if not has_problem:
+        suggested_rewrite = ""
+
+    eval_row = {
+        "survey_id": survey_id,
+        "item_id": item_snapshot["item_id"],
+        "quality_score": None,
+        "problem_categories": problem_categories,
+        "detected_terms": detected_terms,
+        "llm_comment": llm_comment,
+        "suggested_rewrite": suggested_rewrite,
+        "created_at": now_str(),
+    }
+    result_row = {
+        "item_id": item_snapshot["item_id"],
+        "item_order": item_snapshot["item_order"],
+        "question_text": question_text,
+        "status": status,
+        "has_problem": has_problem,
+        "problem_categories": problem_categories,
+        "detected_terms": detected_terms,
+        "llm_comment": llm_comment,
+        "suggested_rewrite": suggested_rewrite,
+        "llm_error": llm_error
+    }
+    debug_error = None
+    if llm_error or recovered_error:
+        debug_error = {
+            "item_id": item_snapshot["item_id"],
+            "item_order": item_snapshot["item_order"],
+            "error": llm_error or recovered_error,
+            "recovered": bool(recovered_error),
+        }
+
+    return {
+        "item_order": item_snapshot["item_order"],
+        "result_row": result_row,
+        "eval_row": eval_row,
+        "debug_error": debug_error,
+    }
 
 
 def _evaluate_quality_without_long_db_lock(survey_id: str):
@@ -96,65 +270,25 @@ def _evaluate_quality_without_long_db_lock(survey_id: str):
     eval_rows = []
     debug_errors = []
 
-    for item in item_snapshots:
-        question_text = item["question_text"]
+    max_workers = _parse_quality_worker_count()
+    worker_results = []
 
-        llm_result = None
-        llm_error = None
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(_evaluate_single_quality_item, survey_id, item_snapshot)
+            for item_snapshot in item_snapshots
+        ]
 
-        try:
-            llm_result = evaluate_item_with_llm(
-                question_text,
-                item["option_texts"]
-            )
-        except Exception as e:
-            llm_error = repr(e)
-            debug_errors.append({
-                "item_id": item["item_id"],
-                "item_order": item["item_order"],
-                "error": llm_error
-            })
+        for future in futures:
+            worker_results.append(future.result())
 
-        score = calculate_quality_score(llm_result)
-        problem_categories = llm_result.get("problem_categories") if isinstance(llm_result, dict) else None
-        detected_terms = llm_result.get("detected_terms") if isinstance(llm_result, dict) else None
-        llm_comment = llm_result.get("llm_comment") if isinstance(llm_result, dict) else None
-        suggested_rewrite = llm_result.get("suggested_rewrite") if isinstance(llm_result, dict) else None
+    worker_results.sort(key=lambda row: row["item_order"])
 
-        status = score_status(score)
-
-        if status in ["warning", "bad"] and not _has_text(suggested_rewrite):
-            suggested_rewrite = build_fallback_rewrite(
-                question_text=question_text,
-                problem_categories=problem_categories,
-            )
-
-        if not _can_show_suggested_rewrite(score):
-            suggested_rewrite = ""
-
-        eval_rows.append({
-            "survey_id": survey_id,
-            "item_id": item["item_id"],
-            "quality_score": score,
-            "problem_categories": problem_categories,
-            "detected_terms": detected_terms,
-            "llm_comment": llm_comment,
-            "suggested_rewrite": suggested_rewrite,
-            "created_at": now_str(),
-        })
-
-        results.append({
-            "item_id": item["item_id"],
-            "item_order": item["item_order"],
-            "question_text": question_text,
-            "quality_score": score,
-            "status": status,
-            "problem_categories": problem_categories,
-            "detected_terms": detected_terms,
-            "llm_comment": llm_comment,
-            "suggested_rewrite": suggested_rewrite,
-            "llm_error": llm_error
-        })
+    for worker_row in worker_results:
+        results.append(worker_row["result_row"])
+        eval_rows.append(worker_row["eval_row"])
+        if worker_row["debug_error"] is not None:
+            debug_errors.append(worker_row["debug_error"])
 
     db = SessionLocal()
 
@@ -212,18 +346,20 @@ def get_quality_results(survey_id: str):
         results = []
 
         for item, eval_row in rows:
+            status = _quality_status(eval_row.problem_categories)
+            has_problem = _has_problem(eval_row.problem_categories)
             results.append({
                 "item_id": item.item_id,
                 "item_order": item.item_order,
                 "question_text": item.question_text,
-                "quality_score": eval_row.quality_score,
-                "status": score_status(eval_row.quality_score),
+                "status": status,
+                "has_problem": has_problem,
                 "problem_categories": eval_row.problem_categories,
                 "detected_terms": eval_row.detected_terms,
                 "llm_comment": eval_row.llm_comment,
                 "suggested_rewrite": (
                     eval_row.suggested_rewrite
-                    if _can_show_suggested_rewrite(eval_row.quality_score)
+                    if has_problem
                     else ""
                 ),
                 "created_at": eval_row.created_at
@@ -262,7 +398,7 @@ def get_construct_results(survey_id: str):
         rows = db.query(
             models.SurveyItem,
             models.ConstructEvaluation
-        ).join(
+        ).outerjoin(
             models.ConstructEvaluation,
             models.SurveyItem.item_id == models.ConstructEvaluation.item_id
         ).filter(
@@ -276,29 +412,38 @@ def get_construct_results(survey_id: str):
 
         for item, eval_row in rows:
             combined_score = None
-            if eval_row.embedding_score is not None and eval_row.llm_score is not None:
-                combined_score = round(
-                    eval_row.embedding_score * 0.4 + eval_row.llm_score * 0.6,
-                    3
-                )
+            if eval_row is not None:
+                has_embedding = eval_row.embedding_score is not None
+                has_llm = eval_row.llm_score is not None
+
+                if has_embedding and has_llm:
+                    combined_score = round(
+                        eval_row.embedding_score * 0.4 + eval_row.llm_score * 0.6,
+                        3
+                    )
+                elif has_embedding:
+                    combined_score = round(float(eval_row.embedding_score), 3)
+                elif has_llm:
+                    combined_score = round(float(eval_row.llm_score), 3)
 
             results.append({
                 "item_id": item.item_id,
                 "item_order": item.item_order,
                 "question_text": item.question_text,
-                "embedding_features": eval_row.embedding_features,
-                "embedding_score": eval_row.embedding_score,
-                "llm_features": sanitize_construct_llm_features(eval_row.llm_features),
-                "llm_score": eval_row.llm_score,
+                "embedding_features": eval_row.embedding_features if eval_row else None,
+                "embedding_score": eval_row.embedding_score if eval_row else None,
+                "llm_features": sanitize_construct_llm_features(eval_row.llm_features) if eval_row else None,
+                "llm_score": eval_row.llm_score if eval_row else None,
                 "combined_score": combined_score,
                 "status": score_status(combined_score),
-                "predicted_citc": eval_row.predicted_citc,
-                "predicted_alpha_impact": eval_row.predicted_alpha_impact,
-                "created_at": eval_row.created_at
+                "predicted_citc": eval_row.predicted_citc if eval_row else None,
+                "predicted_alpha_impact": eval_row.predicted_alpha_impact if eval_row else None,
+                "created_at": eval_row.created_at if eval_row else None
             })
 
         return {
             "survey_id": survey_id,
+            "item_count": len(results),
             "results": results
         }
 

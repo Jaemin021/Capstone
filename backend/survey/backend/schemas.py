@@ -12,6 +12,7 @@ class SurveyItemOptionCreate(BaseModel):
 class SurveyItemCreate(BaseModel):
     item_order: int
     question_text: str
+    item_category: Optional[str] = None
 
     # 기본은 5점 리커트
     question_type: str = "likert_5"
@@ -128,7 +129,9 @@ class PublicResponseCreate(ResponseCreate):
 
 class ItemQualityResult(BaseModel):
     item_id: str
-    quality_score: float
+    quality_score: Optional[float] = None
+    status: Optional[str] = None
+    has_problem: Optional[bool] = None
     problem_categories: List[str]
     detected_terms: List[str]
     suggested_rewrite: Optional[str] = None

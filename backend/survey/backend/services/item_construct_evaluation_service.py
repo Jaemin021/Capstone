@@ -1,9 +1,17 @@
 # backend/services/item_construct_evaluation_service.py
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+import time
+from types import SimpleNamespace
 import models
 
-from services.item_construct_embedding_service import evaluate_embedding_construct_features
+from services.embedding_service import get_embedding
+from services.item_construct_embedding_service import (
+    build_construct_text,
+    calculate_embedding_construct_features_from_vectors,
+)
 from services.item_construct_llm_service import (
     evaluate_llm_construct_features,
     calculate_llm_construct_score
@@ -28,6 +36,73 @@ def sanitize_construct_llm_features(llm_features):
     }
 
 
+def _parse_construct_llm_worker_count():
+    # Stability-first default: keep concurrency low for external LLM calls.
+    raw = os.getenv("CONSTRUCT_LLM_MAX_WORKERS", "1").strip()
+    try:
+        parsed = int(raw)
+    except Exception:
+        return 1
+    return max(1, min(parsed, 8))
+
+
+def _parse_construct_llm_max_retries():
+    raw = os.getenv("CONSTRUCT_LLM_MAX_RETRIES", "2").strip()
+    try:
+        parsed = int(raw)
+    except Exception:
+        return 2
+    return max(0, min(parsed, 6))
+
+
+def _parse_construct_llm_retry_delay_ms():
+    raw = os.getenv("CONSTRUCT_LLM_RETRY_DELAY_MS", "300").strip()
+    try:
+        parsed = int(raw)
+    except Exception:
+        return 300
+    return max(0, min(parsed, 5000))
+
+
+def _evaluate_single_construct_llm(target_item_snapshot, survey_snapshot, all_item_snapshots):
+    target_item = SimpleNamespace(**target_item_snapshot)
+    survey = SimpleNamespace(**survey_snapshot)
+    normal_items = [SimpleNamespace(**row) for row in all_item_snapshots]
+
+    max_retries = _parse_construct_llm_max_retries()
+    retry_delay_sec = _parse_construct_llm_retry_delay_ms() / 1000.0
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            llm_features = evaluate_llm_construct_features(
+                target_item=target_item,
+                survey=survey,
+                normal_items=normal_items
+            )
+            llm_features = sanitize_construct_llm_features(llm_features)
+            llm_score = calculate_llm_construct_score(llm_features)
+            return {
+                "item_id": target_item.item_id,
+                "llm_features": llm_features,
+                "llm_score": llm_score,
+                "error": None,
+            }
+        except Exception as e:
+            last_error = e
+            if attempt >= max_retries:
+                break
+            if retry_delay_sec > 0:
+                time.sleep(retry_delay_sec)
+
+    return {
+        "item_id": target_item.item_id,
+        "llm_features": None,
+        "llm_score": None,
+        "error": f"llm failed(after retries): {repr(last_error)}",
+    }
+
+
 def evaluate_construct_for_survey(db, survey_id: str, overwrite: bool = True):
     survey = db.query(models.Survey).filter_by(survey_id=survey_id).first()
 
@@ -42,44 +117,79 @@ def evaluate_construct_for_survey(db, survey_id: str, overwrite: bool = True):
     results = []
     debug_errors = []
 
+    item_snapshots = [
+        {
+            "item_id": item.item_id,
+            "item_order": item.item_order,
+            "question_text": item.question_text,
+        }
+        for item in normal_items
+    ]
+    survey_snapshot = {
+        "title": survey.title,
+        "construct_name": survey.construct_name,
+        "construct_description": survey.construct_description,
+    }
+
+    item_vectors = {}
+    construct_vec = None
+    embedding_global_error = None
+
+    try:
+        for row in item_snapshots:
+            item_vectors[row["item_id"]] = get_embedding(row["question_text"])
+        construct_text = build_construct_text(survey, normal_items)
+        construct_vec = get_embedding(construct_text)
+    except Exception as e:
+        embedding_global_error = f"embedding precompute failed: {repr(e)}"
+
+    llm_result_map = {}
+    max_workers = _parse_construct_llm_worker_count()
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(
+                _evaluate_single_construct_llm,
+                item_snapshot,
+                survey_snapshot,
+                item_snapshots,
+            )
+            for item_snapshot in item_snapshots
+        ]
+        for future in futures:
+            row = future.result()
+            llm_result_map[row["item_id"]] = row
+
+    now = datetime.now().isoformat()
+
+    if overwrite:
+        db.query(models.ConstructEvaluation).filter_by(
+            survey_id=survey_id,
+        ).delete(synchronize_session=False)
+
     for item in normal_items:
-        if overwrite:
-            old_eval = db.query(models.ConstructEvaluation).filter_by(
-                survey_id=survey_id,
-                item_id=item.item_id
-            ).first()
-
-            if old_eval is not None:
-                db.delete(old_eval)
-                db.commit()
-
         item_errors = []
         embedding_result = {
             "embedding_features": None,
             "embedding_score": None
         }
-        llm_features = None
-        llm_score = None
 
-        try:
-            embedding_result = evaluate_embedding_construct_features(
-                target_item=item,
-                survey=survey,
-                normal_items=normal_items
-            )
-        except Exception as e:
-            item_errors.append(f"embedding failed: {repr(e)}")
+        if embedding_global_error is not None:
+            item_errors.append(embedding_global_error)
+        else:
+            try:
+                embedding_result = calculate_embedding_construct_features_from_vectors(
+                    target_item_id=item.item_id,
+                    item_vectors=item_vectors,
+                    construct_vec=construct_vec,
+                )
+            except Exception as e:
+                item_errors.append(f"embedding failed: {repr(e)}")
 
-        try:
-            llm_features = evaluate_llm_construct_features(
-                target_item=item,
-                survey=survey,
-                normal_items=normal_items
-            )
-            llm_features = sanitize_construct_llm_features(llm_features)
-            llm_score = calculate_llm_construct_score(llm_features)
-        except Exception as e:
-            item_errors.append(f"llm failed: {repr(e)}")
+        llm_row = llm_result_map.get(item.item_id)
+        llm_features = llm_row.get("llm_features") if llm_row else None
+        llm_score = llm_row.get("llm_score") if llm_row else None
+        if llm_row and llm_row.get("error"):
+            item_errors.append(llm_row["error"])
 
         if item_errors:
             debug_errors.append({
@@ -97,12 +207,11 @@ def evaluate_construct_for_survey(db, survey_id: str, overwrite: bool = True):
             llm_score=llm_score,
             predicted_citc=None,
             predicted_alpha_impact=None,
-            created_at=datetime.now().isoformat()
+            created_at=now
         )
 
         db.add(db_eval)
-        db.commit()
-        db.refresh(db_eval)
+        db.flush()
 
         results.append({
             "construct_eval_id": db_eval.construct_eval_id,
@@ -116,6 +225,8 @@ def evaluate_construct_for_survey(db, survey_id: str, overwrite: bool = True):
             "predicted_citc": None,
             "errors": item_errors if item_errors else None
         })
+
+    db.commit()
 
     response = {
         "survey_id": survey_id,

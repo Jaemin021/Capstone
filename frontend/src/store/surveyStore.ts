@@ -25,10 +25,35 @@ const normalizeOptions = (options?: string[]) => {
   return next.map((option) => option ?? '')
 }
 
+const normalizeItemCategory = (value?: string | null) => {
+  const raw = (value ?? '').trim()
+  if (!raw) {
+    return ''
+  }
+
+  const parts = raw
+    .split('/')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+
+  const unique: string[] = []
+  const seen = new Set<string>()
+  parts.forEach((token) => {
+    const key = token.toLowerCase()
+    if (!seen.has(key)) {
+      seen.add(key)
+      unique.push(token)
+    }
+  })
+
+  return unique.join(' / ')
+}
+
 const initialItems: SurveyItem[] = [
   {
     id: createId(),
     text: '',
+    itemCategory: '',
     type: 'likert-5',
     options: [...defaultOptions],
   },
@@ -64,7 +89,10 @@ interface SurveyStore {
   resetDraft: () => void
   addItem: () => void
   selectItem: (id: string) => void
-  updateItem: (id: string, updates: Partial<Pick<SurveyItem, 'text' | 'type'>>) => void
+  updateItem: (
+    id: string,
+    updates: Partial<Pick<SurveyItem, 'text' | 'type' | 'itemCategory'>>,
+  ) => void
   updateItemOption: (id: string, optionIndex: number, value: string) => void
   setItemOptions: (id: string, options: string[]) => void
   removeItem: (id: string) => void
@@ -76,6 +104,9 @@ interface SurveyStore {
   setItemsFromBackendSurvey: (
     survey: BackendSurveyResponse,
     options?: { normalItemsOnly?: boolean },
+  ) => void
+  replaceEditableItems: (
+    rows: Array<{ text: string; itemCategory?: string; options?: string[] }>,
   ) => void
 }
 
@@ -101,6 +132,7 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
     const item: SurveyItem = {
       id: createId(),
       text: '',
+      itemCategory: '',
       type: 'likert-5',
       options: [...defaultOptions],
     }
@@ -127,7 +159,18 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
   updateItem: (id, updates) =>
     set((state) => ({
       items: state.items.map((item) =>
-        item.id === id ? { ...item, ...updates, quality: undefined, citc: undefined } : item,
+        item.id === id
+          ? {
+              ...item,
+              ...updates,
+              itemCategory:
+                updates.itemCategory != null
+                  ? normalizeItemCategory(updates.itemCategory)
+                  : item.itemCategory,
+              quality: undefined,
+              citc: undefined,
+            }
+          : item,
       ),
     })),
   updateItemOption: (id, optionIndex, value) =>
@@ -220,6 +263,7 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
         id: item.item_id,
         backendItemId: item.item_id,
         text: item.question_text,
+        itemCategory: normalizeItemCategory(item.item_category),
         type: fromBackendQuestionType(item.question_type),
         options: normalizeOptions(item.options.map((option) => option.option_label)),
         backendOptions: item.options,
@@ -234,6 +278,33 @@ export const useSurveyStore = create<SurveyStore>((set, get) => ({
           title: survey.title,
           surveyContext: survey.description ?? survey.construct_description ?? '',
         },
+      }
+    }),
+  replaceEditableItems: (rows) =>
+    set((state) => {
+      const sanitized = rows
+        .map((row) => ({
+          text: row.text.trim(),
+          itemCategory: normalizeItemCategory(row.itemCategory),
+          options: normalizeOptions(row.options),
+        }))
+        .filter((row) => row.text.length > 0)
+
+      const items: SurveyItem[] =
+        sanitized.length > 0
+          ? sanitized.map((row) => ({
+              id: createId(),
+              text: row.text,
+              itemCategory: row.itemCategory,
+              type: 'likert-5',
+              options: row.options,
+            }))
+          : createInitialItems()
+
+      return {
+        ...state,
+        items,
+        selectedItemId: items[0]?.id ?? null,
       }
     }),
 }))

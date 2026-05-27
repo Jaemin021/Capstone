@@ -18,12 +18,14 @@ from services.feature_service import (
     calculate_content_features,
     calculate_relation_features,
     build_compact_features,
-    calculate_reliability_summary
+    calculate_reliability_summary,
+    resolve_binary_reliability_status,
 )
 from services.population_feature_service import calculate_population_features
 
 
 router = APIRouter(prefix="/surveys")
+POPULATION_REFRESH_BATCH_SIZE = 10
 
 
 def generate_access_key():
@@ -45,6 +47,91 @@ def _safe_float_or_empty(value):
 
 def _json_text(value):
     return json.dumps(value, ensure_ascii=False) if value is not None else ""
+
+
+def _score_status(score, good=8.0, warning=6.0):
+    if score is None:
+        return "unknown"
+
+    try:
+        numeric = float(score)
+    except Exception:
+        return "unknown"
+
+    if numeric >= good:
+        return "good"
+    if numeric >= warning:
+        return "warning"
+    return "bad"
+
+
+def _quality_status_from_categories(problem_categories):
+    if not isinstance(problem_categories, list):
+        return "unknown"
+    return "problem" if len(problem_categories) > 0 else "ok"
+
+
+def _refresh_population_features_for_survey(db, survey_id: str):
+    responses = db.query(models.Response).filter_by(
+        survey_id=survey_id,
+        is_completed=True
+    ).all()
+
+    updated_count = 0
+
+    for response in responses:
+        db_feature = db.query(models.ResponseFeature).filter_by(
+            response_id=response.response_id
+        ).first()
+
+        if db_feature is None:
+            continue
+
+        population_features = calculate_population_features(
+            db=db,
+            survey_id=survey_id,
+            response_id=response.response_id
+        )
+
+        compact_features = build_compact_features(
+            log_f=db_feature.log_features or {},
+            content_f=db_feature.content_features or {},
+            relation_f=db_feature.relation_features or {},
+            population_f=population_features
+        )
+
+        db_feature.population_features = population_features
+        db_feature.compact_features = compact_features
+        updated_count += 1
+
+    db.commit()
+    return updated_count
+
+
+def normalize_item_category(value):
+    if value is None:
+        return None
+
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    tokens = []
+    seen = set()
+    for token in raw.split("/"):
+        normalized = token.strip()
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        tokens.append(normalized)
+
+    if not tokens:
+        return None
+
+    return " / ".join(tokens)
 
 
 def get_survey_by_access_key(db, access_key: str):
@@ -95,6 +182,7 @@ def build_survey_response(db, survey):
             "item_id": item.item_id,
             "item_order": item.item_order,
             "question_text": item.question_text,
+            "item_category": item.item_category,
             "question_type": item.question_type,
             "item_role": item.item_role,
             "is_generated": item.is_generated,
@@ -262,6 +350,38 @@ def create_response_and_features(db, survey_id: str, response: schemas.ResponseC
     db.commit()
     db.refresh(db_feature)
 
+    population_refresh = {
+        "triggered": False,
+        "batch_size": POPULATION_REFRESH_BATCH_SIZE,
+        "completed_response_count": None,
+        "updated_count": 0,
+    }
+
+    if bool(response.is_completed):
+        completed_response_count = db.query(models.Response).filter_by(
+            survey_id=survey_id,
+            is_completed=True
+        ).count()
+        population_refresh["completed_response_count"] = completed_response_count
+
+        if (
+            completed_response_count > 0
+            and completed_response_count % POPULATION_REFRESH_BATCH_SIZE == 0
+        ):
+            updated_count = _refresh_population_features_for_survey(
+                db=db,
+                survey_id=survey_id
+            )
+            population_refresh["triggered"] = True
+            population_refresh["updated_count"] = updated_count
+
+            refreshed_feature = db.query(models.ResponseFeature).filter_by(
+                response_id=response_id
+            ).first()
+            if refreshed_feature is not None:
+                compact_features = refreshed_feature.compact_features or compact_features
+                population_features = refreshed_feature.population_features or population_features
+
     return {
         "response_id": response_id,
         "survey_id": survey_id,
@@ -272,6 +392,7 @@ def create_response_and_features(db, survey_id: str, response: schemas.ResponseC
         "relation_features": relation_features,
         "features": compact_features,
         "reliability": calculate_reliability_summary(compact_features),
+        "population_refresh": population_refresh,
         "message": "response and features created"
     }
 
@@ -353,6 +474,7 @@ def create_survey(survey: schemas.SurveyCreate):
             survey_id=survey_id,
             item_order=item.item_order,
             question_text=item.question_text,
+            item_category=normalize_item_category(item.item_category),
             question_type=item.question_type,
             is_required=item.is_required,
             item_role="normal",
@@ -390,6 +512,7 @@ def create_survey(survey: schemas.SurveyCreate):
             "item_id": db_item.item_id,
             "item_order": db_item.item_order,
             "question_text": db_item.question_text,
+            "item_category": db_item.item_category,
             "question_type": db_item.question_type,
             "item_role": "normal",
             "is_generated": False,
@@ -440,6 +563,7 @@ def create_survey(survey: schemas.SurveyCreate):
                 survey_id=survey_id,
                 item_order=next_order,
                 question_text=rev["question_text"],
+                item_category=source.get("item_category"),
                 question_type="likert_5",
                 is_required=True,
                 item_role="reverse",
@@ -476,6 +600,7 @@ def create_survey(survey: schemas.SurveyCreate):
                 "item_id": db_item.item_id,
                 "item_order": db_item.item_order,
                 "question_text": db_item.question_text,
+                "item_category": db_item.item_category,
                 "question_type": db_item.question_type,
                 "item_role": db_item.item_role,
                 "is_generated": db_item.is_generated,
@@ -517,6 +642,7 @@ def create_survey(survey: schemas.SurveyCreate):
                 survey_id=survey_id,
                 item_order=next_order,
                 question_text=question_text,
+                item_category=base_item.get("item_category"),
                 question_type="likert_5",
                 is_required=True,
                 item_role="trap",
@@ -553,6 +679,7 @@ def create_survey(survey: schemas.SurveyCreate):
                 "item_id": db_item.item_id,
                 "item_order": db_item.item_order,
                 "question_text": db_item.question_text,
+                "item_category": db_item.item_category,
                 "question_type": db_item.question_type,
                 "item_role": db_item.item_role,
                 "is_generated": db_item.is_generated,
@@ -595,6 +722,106 @@ def create_survey(survey: schemas.SurveyCreate):
 
     db.close()
     return result
+
+
+@router.post("/{survey_id}/duplicate")
+def duplicate_survey(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        source_survey = db.query(models.Survey).filter_by(survey_id=survey_id).first()
+        if source_survey is None:
+            raise HTTPException(status_code=404, detail="survey not found")
+
+        copied_title = f"{source_survey.title} (복사본)"
+        copied_survey = models.Survey(
+            title=copied_title,
+            description=source_survey.description,
+            construct_name=source_survey.construct_name,
+            construct_description=source_survey.construct_description,
+            status="draft",
+        )
+        db.add(copied_survey)
+        db.commit()
+        db.refresh(copied_survey)
+
+        source_items = db.query(models.SurveyItem).filter_by(
+            survey_id=survey_id
+        ).order_by(models.SurveyItem.item_order.asc()).all()
+
+        source_options_by_item = {}
+        if source_items:
+            source_item_ids = [item.item_id for item in source_items]
+            source_options = db.query(models.SurveyItemOption).filter(
+                models.SurveyItemOption.item_id.in_(source_item_ids)
+            ).order_by(
+                models.SurveyItemOption.item_id.asc(),
+                models.SurveyItemOption.option_order.asc(),
+            ).all()
+
+            for option in source_options:
+                source_options_by_item.setdefault(option.item_id, []).append(option)
+
+        item_id_map = {}
+        copied_items_by_source = {}
+
+        # 1) 문항 자체를 먼저 모두 복사
+        for source_item in source_items:
+            copied_item = models.SurveyItem(
+                survey_id=copied_survey.survey_id,
+                item_order=source_item.item_order,
+                question_text=source_item.question_text,
+                item_category=normalize_item_category(source_item.item_category),
+                question_type=source_item.question_type,
+                is_required=source_item.is_required,
+                item_role=source_item.item_role,
+                is_generated=source_item.is_generated,
+                source_item_id=None,
+                trap_correct_option_order=source_item.trap_correct_option_order,
+                reverse_expected_rule=source_item.reverse_expected_rule,
+            )
+            db.add(copied_item)
+            db.flush()
+
+            item_id_map[source_item.item_id] = copied_item.item_id
+            copied_items_by_source[source_item.item_id] = copied_item
+
+        # 2) 역문항 source_item_id 참조를 새 item_id로 연결
+        for source_item in source_items:
+            if source_item.source_item_id is None:
+                continue
+
+            copied_item = copied_items_by_source.get(source_item.item_id)
+            mapped_source_item_id = item_id_map.get(source_item.source_item_id)
+
+            if copied_item is not None:
+                copied_item.source_item_id = mapped_source_item_id
+
+        # 3) 보기 복사
+        for source_item in source_items:
+            copied_item = copied_items_by_source.get(source_item.item_id)
+            if copied_item is None:
+                continue
+
+            for source_option in source_options_by_item.get(source_item.item_id, []):
+                copied_option = models.SurveyItemOption(
+                    item_id=copied_item.item_id,
+                    option_order=source_option.option_order,
+                    option_label=source_option.option_label,
+                    option_score=source_option.option_score,
+                )
+                db.add(copied_option)
+
+        db.commit()
+        db.refresh(copied_survey)
+
+        result = build_survey_response(db, copied_survey)
+        result["message"] = "survey duplicated"
+        result["source_survey_id"] = source_survey.survey_id
+        return result
+
+    finally:
+        db.close()
 
 
 def reorder_validation_items(created_items):
@@ -694,6 +921,7 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
                 survey_id=survey_id,
                 item_order=item.item_order,
                 question_text=item.question_text,
+                item_category=normalize_item_category(item.item_category),
                 question_type=item.question_type,
                 is_required=item.is_required,
                 item_role="normal",
@@ -731,6 +959,7 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
                 "item_id": db_item.item_id,
                 "item_order": db_item.item_order,
                 "question_text": db_item.question_text,
+                "item_category": db_item.item_category,
                 "question_type": db_item.question_type,
                 "item_role": "normal",
                 "is_generated": False,
@@ -774,6 +1003,7 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
                     survey_id=survey_id,
                     item_order=next_order,
                     question_text=rev["question_text"],
+                    item_category=source.get("item_category"),
                     question_type="likert_5",
                     is_required=True,
                     item_role="reverse",
@@ -810,6 +1040,7 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
                     "item_id": db_item.item_id,
                     "item_order": db_item.item_order,
                     "question_text": db_item.question_text,
+                    "item_category": db_item.item_category,
                     "question_type": db_item.question_type,
                     "item_role": db_item.item_role,
                     "is_generated": db_item.is_generated,
@@ -849,6 +1080,7 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
                     survey_id=survey_id,
                     item_order=next_order,
                     question_text=question_text,
+                    item_category=base_item.get("item_category"),
                     question_type="likert_5",
                     is_required=True,
                     item_role="trap",
@@ -885,6 +1117,7 @@ def update_survey(survey_id: str, survey: schemas.SurveyCreate):
                     "item_id": db_item.item_id,
                     "item_order": db_item.item_order,
                     "question_text": db_item.question_text,
+                    "item_category": db_item.item_category,
                     "question_type": db_item.question_type,
                     "item_role": db_item.item_role,
                     "is_generated": db_item.is_generated,
@@ -1199,9 +1432,8 @@ def get_survey_reliability_distribution(survey_id: str):
         ).all()
 
         respondents = []
-        high_count = 0
-        mid_count = 0
-        low_count = 0
+        sincere_count = 0
+        insincere_count = 0
 
         for response, response_feature in rows:
             compact = response_feature.compact_features or {}
@@ -1216,16 +1448,15 @@ def get_survey_reliability_distribution(survey_id: str):
             except Exception:
                 score = reliability["score"]
 
-            status = compact.get("reliability_status")
-            if status not in ["good", "warning", "bad"]:
-                status = reliability["status"]
+            status = resolve_binary_reliability_status(
+                status=compact.get("reliability_status"),
+                score=score
+            )
 
-            if status == "good":
-                high_count += 1
-            elif status == "warning":
-                mid_count += 1
+            if status == "sincere":
+                sincere_count += 1
             else:
-                low_count += 1
+                insincere_count += 1
 
             avg_item_time_ms = compact.get("avg_item_time_ms")
             time_per_item = []
@@ -1245,20 +1476,21 @@ def get_survey_reliability_distribution(survey_id: str):
                 "submittedAt": response.submitted_at,
                 "reliabilityScore": round(score, 1),
                 "timePerItem": time_per_item,
-                "flagged": status == "bad",
+                "flagged": status == "insincere",
                 "reason": reason_text
             })
 
         return {
             "survey_id": survey_id,
             "total_count": len(respondents),
-            "high_count": high_count,
-            "mid_count": mid_count,
-            "low_count": low_count,
+            "sincere_count": sincere_count,
+            "insincere_count": insincere_count,
+            "high_count": sincere_count,
+            "mid_count": 0,
+            "low_count": insincere_count,
             "distribution": [
-                {"level": "high", "label": "상", "count": high_count},
-                {"level": "mid", "label": "중", "count": mid_count},
-                {"level": "low", "label": "하", "count": low_count}
+                {"level": "sincere", "label": "성실", "count": sincere_count},
+                {"level": "insincere", "label": "비성실", "count": insincere_count}
             ],
             "respondents": respondents
         }
@@ -1275,6 +1507,21 @@ def download_survey_response_features_csv(survey_id: str):
         survey = db.query(models.Survey).filter_by(survey_id=survey_id).first()
         if survey is None:
             raise HTTPException(status_code=404, detail="survey not found")
+
+        survey_items = db.query(models.SurveyItem).filter_by(
+            survey_id=survey_id
+        ).order_by(models.SurveyItem.item_order.asc()).all()
+
+        ordered_item_orders = [
+            item.item_order
+            for item in survey_items
+            if item.item_order is not None
+        ]
+        item_order_by_id = {
+            item.item_id: item.item_order
+            for item in survey_items
+            if item.item_order is not None
+        }
 
         rows = db.query(
             models.Response,
@@ -1296,6 +1543,30 @@ def download_survey_response_features_csv(survey_id: str):
 
         ordered_compact_keys = sorted(compact_keys)
 
+        response_ids = [response.response_id for response, _ in rows]
+        item_logs_by_response = {}
+        if response_ids:
+            item_logs = db.query(models.ResponseItemLog).filter(
+                models.ResponseItemLog.response_id.in_(response_ids)
+            ).all()
+
+            for item_log in item_logs:
+                item_order = item_order_by_id.get(item_log.item_id)
+                if item_order is None:
+                    continue
+
+                response_map = item_logs_by_response.setdefault(item_log.response_id, {})
+                value = item_log.item_time_ms
+
+                if value is None:
+                    continue
+
+                previous = response_map.get(item_order)
+                if previous is None or value > previous:
+                    response_map[item_order] = value
+
+        item_time_columns = [f"item_{order}_time_ms" for order in ordered_item_orders]
+
         header = [
             "response_id",
             "respondent_id",
@@ -1304,7 +1575,8 @@ def download_survey_response_features_csv(survey_id: str):
             "is_completed",
             "reliability_score",
             "reliability_status",
-        ] + ordered_compact_keys + [
+        ] + ordered_compact_keys + item_time_columns + [
+            "item_time_ms_by_order_json",
             "log_features_json",
             "content_features_json",
             "relation_features_json",
@@ -1345,7 +1617,18 @@ def download_survey_response_features_csv(survey_id: str):
                 else:
                     row.append(value if value is not None else "")
 
+            item_time_map = item_logs_by_response.get(response.response_id, {})
+            for order in ordered_item_orders:
+                row.append(_safe_float_or_empty(item_time_map.get(order)))
+
+            item_time_json = {
+                str(order): item_time_map.get(order)
+                for order in ordered_item_orders
+                if item_time_map.get(order) is not None
+            }
+
             row.extend([
+                _json_text(item_time_json),
                 _json_text(feature.log_features),
                 _json_text(feature.content_features),
                 _json_text(feature.relation_features),
@@ -1356,6 +1639,183 @@ def download_survey_response_features_csv(survey_id: str):
 
         csv_text = "\ufeff" + buffer.getvalue()
         filename = f"survey-{survey_id}-response-features.csv"
+
+        return PlainTextResponse(
+            content=csv_text,
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            },
+        )
+
+    finally:
+        db.close()
+
+
+@router.get("/{survey_id}/item-evaluations.csv")
+def download_survey_item_evaluations_csv(survey_id: str):
+    db = SessionLocal()
+
+    try:
+        survey = db.query(models.Survey).filter_by(survey_id=survey_id).first()
+        if survey is None:
+            raise HTTPException(status_code=404, detail="survey not found")
+
+        items = db.query(models.SurveyItem).filter_by(
+            survey_id=survey_id
+        ).order_by(
+            models.SurveyItem.item_order.asc()
+        ).all()
+
+        item_ids = [item.item_id for item in items]
+
+        options_map = {}
+        if item_ids:
+            options = db.query(models.SurveyItemOption).filter(
+                models.SurveyItemOption.item_id.in_(item_ids)
+            ).order_by(
+                models.SurveyItemOption.item_id.asc(),
+                models.SurveyItemOption.option_order.asc(),
+            ).all()
+
+            for opt in options:
+                options_map.setdefault(opt.item_id, []).append({
+                    "option_order": opt.option_order,
+                    "option_label": opt.option_label,
+                    "option_score": opt.option_score,
+                })
+
+        quality_map = {
+            row.item_id: row
+            for row in db.query(models.ItemQualityEvaluation).filter_by(survey_id=survey_id).all()
+        }
+        construct_map = {
+            row.item_id: row
+            for row in db.query(models.ConstructEvaluation).filter_by(survey_id=survey_id).all()
+        }
+
+        statistics = db.query(models.SurveyStatisticalEvaluation).filter_by(
+            survey_id=survey_id
+        ).order_by(
+            models.SurveyStatisticalEvaluation.created_at.desc()
+        ).first()
+
+        item_citc_map = (statistics.item_citc_results or {}) if statistics else {}
+        alpha_if_deleted_map = (statistics.alpha_if_item_deleted or {}) if statistics else {}
+
+        statistics_response_count = statistics.response_count if statistics else ""
+        statistics_cronbach_alpha = (
+            _safe_float_or_empty(statistics.cronbach_alpha) if statistics else ""
+        )
+        statistics_alpha_status = (
+            _score_status(statistics.cronbach_alpha, good=0.7, warning=0.6)
+            if statistics
+            else "unknown"
+        )
+        statistics_created_at = statistics.created_at if statistics else ""
+
+        header = [
+            "survey_id",
+            "item_id",
+            "item_order",
+            "item_role",
+            "is_generated",
+            "source_item_id",
+            "item_category",
+            "question_text",
+            "options_json",
+            "quality_status",
+            "quality_problem_categories_json",
+            "quality_detected_terms_json",
+            "quality_llm_comment",
+            "quality_suggested_rewrite",
+            "quality_created_at",
+            "construct_embedding_score",
+            "construct_llm_score",
+            "construct_combined_score",
+            "construct_status",
+            "construct_predicted_citc",
+            "construct_predicted_alpha_impact",
+            "construct_embedding_features_json",
+            "construct_llm_features_json",
+            "construct_created_at",
+            "statistics_response_count",
+            "statistics_cronbach_alpha",
+            "statistics_alpha_status",
+            "statistics_item_citc",
+            "statistics_item_citc_status",
+            "statistics_alpha_if_item_deleted",
+            "statistics_created_at",
+        ]
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(header)
+
+        for item in items:
+            quality = quality_map.get(item.item_id)
+            construct = construct_map.get(item.item_id)
+
+            quality_status = _quality_status_from_categories(
+                quality.problem_categories if quality else None
+            )
+
+            embedding_score = construct.embedding_score if construct else None
+            llm_score = construct.llm_score if construct else None
+            combined_score = None
+            if embedding_score is not None and llm_score is not None:
+                try:
+                    combined_score = round(float(embedding_score) * 0.4 + float(llm_score) * 0.6, 3)
+                except Exception:
+                    combined_score = None
+
+            construct_status = _score_status(combined_score, good=8.0, warning=6.0)
+
+            statistics_item_citc = item_citc_map.get(item.item_id)
+            statistics_item_citc_status = _score_status(
+                statistics_item_citc,
+                good=0.4,
+                warning=0.2,
+            )
+            statistics_alpha_if_item_deleted = alpha_if_deleted_map.get(item.item_id)
+
+            row = [
+                survey_id,
+                item.item_id,
+                item.item_order,
+                item.item_role or "",
+                bool(item.is_generated),
+                item.source_item_id or "",
+                item.item_category or "",
+                item.question_text or "",
+                _json_text(options_map.get(item.item_id, [])),
+                quality_status,
+                _json_text(quality.problem_categories if quality else None),
+                _json_text(quality.detected_terms if quality else None),
+                (quality.llm_comment if quality and quality.llm_comment is not None else ""),
+                (quality.suggested_rewrite if quality and quality.suggested_rewrite is not None else ""),
+                (quality.created_at if quality and quality.created_at is not None else ""),
+                _safe_float_or_empty(embedding_score),
+                _safe_float_or_empty(llm_score),
+                _safe_float_or_empty(combined_score),
+                construct_status,
+                _safe_float_or_empty(construct.predicted_citc if construct else None),
+                _safe_float_or_empty(construct.predicted_alpha_impact if construct else None),
+                _json_text(construct.embedding_features if construct else None),
+                _json_text(construct.llm_features if construct else None),
+                (construct.created_at if construct and construct.created_at is not None else ""),
+                statistics_response_count,
+                statistics_cronbach_alpha,
+                statistics_alpha_status,
+                _safe_float_or_empty(statistics_item_citc),
+                statistics_item_citc_status,
+                _safe_float_or_empty(statistics_alpha_if_item_deleted),
+                statistics_created_at,
+            ]
+            writer.writerow(row)
+
+        csv_text = "\ufeff" + buffer.getvalue()
+        filename = f"survey-{survey_id}-item-evaluations.csv"
 
         return PlainTextResponse(
             content=csv_text,
@@ -1435,47 +1895,12 @@ def create_response(survey_id: str, response: schemas.ResponseCreate):
 @router.post("/{survey_id}/refresh-population-features")
 def refresh_population_features(survey_id: str):
     db = SessionLocal()
-
-    responses = db.query(models.Response).filter_by(
-        survey_id=survey_id,
-        is_completed=True
-    ).all()
-
-    updated_count = 0
-
-    for response in responses:
-        db_feature = db.query(models.ResponseFeature).filter_by(
-            response_id=response.response_id
-        ).first()
-
-        if db_feature is None:
-            continue
-
-        population_features = calculate_population_features(
-            db=db,
-            survey_id=survey_id,
-            response_id=response.response_id
-        )
-
-        compact_features = build_compact_features(
-            log_f=db_feature.log_features or {},
-            content_f=db_feature.content_features or {},
-            relation_f=db_feature.relation_features or {},
-            population_f=population_features
-        )
-
-        db_feature.population_features = population_features
-        db_feature.compact_features = compact_features
-
-        updated_count += 1
-
-    db.commit()
-
-    result = {
-        "survey_id": survey_id,
-        "updated_count": updated_count,
-        "message": "population features refreshed"
-    }
-
-    db.close()
-    return result
+    try:
+        updated_count = _refresh_population_features_for_survey(db=db, survey_id=survey_id)
+        return {
+            "survey_id": survey_id,
+            "updated_count": updated_count,
+            "message": "population features refreshed"
+        }
+    finally:
+        db.close()

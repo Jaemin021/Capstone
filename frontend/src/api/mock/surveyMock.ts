@@ -14,13 +14,13 @@ import type {
 
 const wait = (ms = 550) => new Promise((resolve) => window.setTimeout(resolve, ms))
 
-const riskyWords = ['항상', '절대', '모두', '전혀', '무조건', '완벽하게', '매우']
+const riskyWords = ['always', 'never', 'all', 'completely', 'must', 'very']
 
 const sampleItemTexts = [
-  '서비스 이용 과정에서 필요한 정보를 쉽게 찾을 수 있었다.',
-  '설문 문항의 표현이 명확하고 이해하기 쉬웠다.',
-  '응답 과정에서 같은 의미의 문항이 반복된다고 느꼈다.',
-  '전반적으로 이 서비스는 나의 기대를 충족했다.',
+  'It was easy to find the information I needed while using the service.',
+  'The survey item wording was clear and easy to understand.',
+  'I felt similar survey items appeared repeatedly during response.',
+  'Overall, this service met my expectations.',
 ]
 
 export async function mockEvaluateItemQuality(
@@ -31,7 +31,7 @@ export async function mockEvaluateItemQuality(
   const flaggedWords = riskyWords.filter((word) => request.text.includes(word))
   const tooShortPenalty = request.text.trim().length < 12 ? 22 : 0
   const doubleBarrelPenalty =
-    request.text.includes('그리고') || request.text.includes('또는') ? 12 : 0
+    request.text.includes('and') || request.text.includes('or') ? 12 : 0
   const score = Math.max(
     34,
     Math.min(96, 88 - flaggedWords.length * 13 - tooShortPenalty - doubleBarrelPenalty),
@@ -42,7 +42,7 @@ export async function mockEvaluateItemQuality(
     flaggedWords,
     suggestion:
       score <= 60
-        ? '최근 이용 경험을 기준으로, 이 서비스의 핵심 기능이 목적 달성에 도움이 되었다고 느끼셨나요?'
+        ? 'Based on your recent experience, did this service help you achieve your goal?'
         : null,
   }
 }
@@ -73,7 +73,7 @@ export async function mockGenerateTrapItem(
   await wait(620)
 
   return {
-    trapItem: `${request.surveyContext || '본 설문'}의 내용을 꼼꼼히 읽었다면 이 문항에는 '보통'을 선택해 주세요.`,
+    trapItem: `${request.surveyContext || 'this survey'}: if you are reading carefully, choose 'Neutral' for this item.`,
     suggestedPosition: Math.min(Math.max(request.items.length - 1, 1), request.items.length),
   }
 }
@@ -84,7 +84,7 @@ export async function mockGenerateReverseItem(
   await wait(540)
 
   return {
-    reverseItem: `반대로 표현하면, ${request.originalItem.replace(/[.?]$/g, '')}고 느끼지 않았다.`,
+    reverseItem: `In reverse wording: ${request.originalItem.replace(/[.?]$/g, '')}, but I did not feel that way.`,
   }
 }
 
@@ -106,27 +106,25 @@ export async function mockGetSurveyReliability(): Promise<SurveyReliabilityRespo
       flagged: reliabilityScore < 60,
       reason:
         reliabilityScore < 60
-          ? '함정 문항 오답 및 응답 시간 편차가 감지되었습니다.'
-          : '응답 패턴이 정상 범위입니다.',
+          ? 'Trap-item error and unusual response-time deviation were detected.'
+          : 'Response pattern is within the normal range.',
     }
   })
 
-  const high_count = respondents.filter((row) => row.reliabilityScore >= 75).length
-  const mid_count = respondents.filter(
-    (row) => row.reliabilityScore >= 55 && row.reliabilityScore < 75,
-  ).length
-  const low_count = respondents.filter((row) => row.reliabilityScore < 55).length
+  const sincere_count = respondents.filter((row) => row.reliabilityScore >= 55).length
+  const insincere_count = respondents.length - sincere_count
 
   return {
     survey_id: 'mock-survey',
     total_count: respondents.length,
-    high_count,
-    mid_count,
-    low_count,
+    sincere_count,
+    insincere_count,
+    high_count: sincere_count,
+    mid_count: 0,
+    low_count: insincere_count,
     distribution: [
-      { level: 'high', label: '상', count: high_count },
-      { level: 'mid', label: '중', count: mid_count },
-      { level: 'low', label: '하', count: low_count },
+      { level: 'sincere', label: '성실', count: sincere_count },
+      { level: 'insincere', label: '비성실', count: insincere_count },
     ],
     respondents,
   }
