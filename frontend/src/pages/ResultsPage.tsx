@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
@@ -65,7 +65,7 @@ function getErrorMessage(error: unknown, fallback: string) {
       trimmed.includes('<body>')
 
     if (looksLikeHtml) {
-      return 'API ????꾨줎??HTML???묐떟?섏뿀?듬땲?? VITE_API_BASE_URL ?먮뒗 ?꾨줉???쇱슦???ㅼ젙???뺤씤??二쇱꽭??'
+      return 'API 대신 프론트 HTML이 응답되었습니다. VITE_API_BASE_URL 또는 프록시/라우팅 설정을 확인해 주세요.'
     }
 
     return data
@@ -117,27 +117,27 @@ function summarizeQualityLlmFailures(items: QualityEvaluationItem[]) {
   const firstError = failedItems[0]?.llm_error ?? ''
 
   if (firstError.includes('insufficient_quota')) {
-    return `OpenAI ?좊떦??遺議깆쑝濡?${failedItems.length}媛?臾명빆??LLM ?됯?媛 ?ㅽ뙣?덉뒿?덈떎.`
+    return `OpenAI 할당량 부족으로 ${failedItems.length}개 문항의 LLM 평가가 실패했습니다.`
   }
 
   if (firstError.includes('OPENAI_API_KEY is not configured')) {
-    return `OPENAI_API_KEY 誘몄꽕?뺤쑝濡?${failedItems.length}媛?臾명빆??LLM ?됯?媛 ?ㅽ뙣?덉뒿?덈떎.`
+    return `OPENAI_API_KEY 미설정으로 ${failedItems.length}개 문항의 LLM 평가가 실패했습니다.`
   }
 
-  return `${failedItems.length}媛?臾명빆??LLM ?됯?媛 ?ㅽ뙣?덉뒿?덈떎. 諛깆뿏???ㅼ젙/濡쒓렇瑜??뺤씤??二쇱꽭??`
+  return `${failedItems.length}개 문항의 LLM 평가가 실패했습니다. 백엔드 설정/로그를 확인해 주세요.`
 }
 
 function statusLabel(status?: EvaluationStatus | ReliabilityStatus) {
   if (status === 'sincere') {
-    return '?깆떎'
+    return '성실'
   }
 
   if (status === 'insincere') {
-    return '鍮꾩꽦??
+    return '비성실'
   }
 
   if (status === 'good') {
-    return '?좊ː???믪쓬'
+    return '신뢰도 높음'
   }
 
   if (status === 'ok') {
@@ -145,22 +145,22 @@ function statusLabel(status?: EvaluationStatus | ReliabilityStatus) {
   }
 
   if (status === 'problem') {
-    return '臾몄젣'
+    return '문제'
   }
 
   if (status === 'error') {
-    return '?ㅻ쪟'
+    return '오류'
   }
 
   if (status === 'warning') {
-    return '二쇱쓽'
+    return '주의'
   }
 
   if (status === 'bad') {
-    return '?좊ː????쓬'
+    return '신뢰도 낮음'
   }
 
-  return '寃곌낵 ?놁쓬'
+  return '결과 없음'
 }
 
 function statusClassName(status?: EvaluationStatus | ReliabilityStatus) {
@@ -194,7 +194,7 @@ function statusClassName(status?: EvaluationStatus | ReliabilityStatus) {
 function DetailButton({
   open,
   onClick,
-  label = '?먯꽭??蹂닿린',
+  label = '자세히 보기',
 }: {
   open: boolean
   onClick: () => void
@@ -209,7 +209,7 @@ function DetailButton({
         onClick()
       }}
     >
-      {open ? '?묎린' : label}
+      {open ? '접기' : label}
       <ChevronDown size={16} className={open ? 'rotate-180 transition' : 'transition'} />
     </button>
   )
@@ -223,7 +223,7 @@ function formatValue(value: unknown, unit = '', maximumFractionDigits = 1) {
   const number = numberFeature(value)
 
   if (number == null) {
-    return '?곗씠???놁쓬'
+    return '데이터 없음'
   }
 
   return `${number.toLocaleString('ko-KR', { maximumFractionDigits })}${unit}`
@@ -233,20 +233,20 @@ function formatMs(value: unknown) {
   const ms = numberFeature(value)
 
   if (ms == null) {
-    return '?곗씠???놁쓬'
+    return '데이터 없음'
   }
 
   if (ms < 1000) {
     return `${Math.round(ms).toLocaleString('ko-KR')}ms`
   }
 
-  return `${(ms / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}珥?
+  return `${(ms / 1000).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}초`
 }
 
 function formatRatio(value: unknown) {
   const ratio = numberFeature(value)
   if (ratio == null) {
-    return '?곗씠???놁쓬'
+    return '데이터 없음'
   }
 
   return `${(ratio * 100).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}%`
@@ -341,25 +341,25 @@ function ResponseFeatureDetails({ features }: { features?: CompactResponseFeatur
   if (!features) {
     return (
       <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-        ?쒖텧???묐떟 feature ?곗씠?곌? ?꾩쭅 ?놁뒿?덈떎.
+        제출된 응답 feature 데이터가 아직 없습니다.
       </p>
     )
   }
 
   const rows = [
-    { label: '臾명빆???됯퇏 ?묐떟 ?쒓컙', value: formatMs(features.avg_item_time_ms) },
-    { label: '?덈Т 鍮좊Ⅸ ?묐떟 鍮꾩쑉', value: formatRatio(features.too_fast_item_ratio) },
-    { label: '?듭븞 蹂寃?鍮꾩쑉', value: formatRatio(features.answer_changed_ratio) },
-    { label: '?щ갑臾?臾명빆 鍮꾩쑉', value: formatRatio(features.revisit_item_ratio) },
-    { label: '?ㅽ봽?쇱씤 鍮꾩쑉', value: formatRatio(features.offline_ratio) },
-    { label: '?⑥젙 臾명빆 ?ㅽ뙣 鍮꾩쑉', value: formatRatio(features.trap_fail_ratio) },
-    { label: '??Ц???쇨????먯닔', value: formatRatio(features.reverse_consistency_score) },
-    { label: '遺꾩꽍 臾명빆 ??, value: formatValue(features.item_count, '媛?, 0) },
+    { label: '문항당 평균 응답 시간', value: formatMs(features.avg_item_time_ms) },
+    { label: '너무 빠른 응답 비율', value: formatRatio(features.too_fast_item_ratio) },
+    { label: '답안 변경 비율', value: formatRatio(features.answer_changed_ratio) },
+    { label: '재방문 문항 비율', value: formatRatio(features.revisit_item_ratio) },
+    { label: '오프라인 비율', value: formatRatio(features.offline_ratio) },
+    { label: '함정 문항 실패 비율', value: formatRatio(features.trap_fail_ratio) },
+    { label: '역문항 일관성 점수', value: formatRatio(features.reverse_consistency_score) },
+    { label: '분석 문항 수', value: formatValue(features.item_count, '개', 0) },
   ]
 
   return (
     <article className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-      <h3 className="text-sm font-black text-slate-950">?묐떟 濡쒓렇 ?곸꽭</h3>
+      <h3 className="text-sm font-black text-slate-950">응답 로그 상세</h3>
       <dl className="mt-3 space-y-2">
         {rows.map((row) => (
           <div key={row.label} className="flex items-start justify-between gap-3">
@@ -401,9 +401,9 @@ function QualityRow({
                 : 'bg-rose-50 text-rose-700 ring-rose-200'
             }`}
           >
-            {isReverse ? '??Ц?? : '?⑥젙臾명빆'}
+            {isReverse ? '역문항' : '함정문항'}
           </span>
-          <span className="text-xs font-bold text-slate-500">?됯? ?쒖쇅 臾명빆</span>
+          <span className="text-xs font-bold text-slate-500">평가 제외 문항</span>
         </div>
         <p className="text-sm leading-6 text-slate-800">{item.question_text}</p>
       </article>
@@ -458,13 +458,13 @@ function QualityRow({
         <div className="mt-4 space-y-3 rounded-lg border border-white bg-white p-4 text-sm leading-6 text-slate-700">
           {hasLlmError ? (
             <div className="rounded-md bg-rose-50 p-3 text-rose-900">
-              <p className="font-black">LLM ?됯? ?ㅻ쪟</p>
+              <p className="font-black">LLM 평가 오류</p>
               <p className="mt-1 break-all text-xs leading-5">{item.llm_error}</p>
             </div>
           ) : null}
           {item.llm_comment ? (
             <div>
-              <p className="font-black text-slate-900">LLM 肄붾찘??/p>
+              <p className="font-black text-slate-900">LLM 코멘트</p>
               <p className="mt-1">{item.llm_comment}</p>
             </div>
           ) : null}
@@ -505,7 +505,7 @@ function StatisticsPanel({ statistics }: { statistics?: StatisticsEvaluationResp
   if (!statistics || statistics.result === null) {
     return (
       <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-        ??λ맂 ?듦퀎 遺꾩꽍 寃곌낵媛 ?놁뒿?덈떎. ?묐떟??異⑸텇???볦씤 ???듦퀎 遺꾩꽍???ㅽ뻾??二쇱꽭??
+        저장된 통계 분석 결과가 없습니다. 응답이 충분히 쌓인 뒤 통계 분석을 실행해 주세요.
       </p>
     )
   }
@@ -522,7 +522,7 @@ function StatisticsPanel({ statistics }: { statistics?: StatisticsEvaluationResp
     <div className="space-y-4">
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-lg bg-slate-50 p-4">
-          <p className="text-xs font-black text-slate-500">?묐떟 ??/p>
+          <p className="text-xs font-black text-slate-500">응답 수</p>
           <p className="mt-1 text-2xl font-black text-slate-950">{statistics.response_count}</p>
         </div>
         <div className="rounded-lg bg-slate-50 p-4">
@@ -532,7 +532,7 @@ function StatisticsPanel({ statistics }: { statistics?: StatisticsEvaluationResp
           </p>
         </div>
         <div className="rounded-lg bg-slate-50 p-4">
-          <p className="text-xs font-black text-slate-500">?곹깭</p>
+          <p className="text-xs font-black text-slate-500">상태</p>
           <span
             className={`mt-2 inline-flex rounded-md px-2 py-1 text-xs font-black ring-1 ${statusClassName(
               statistics.alpha_status,
@@ -547,10 +547,10 @@ function StatisticsPanel({ statistics }: { statistics?: StatisticsEvaluationResp
         <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left text-sm">
           <thead>
             <tr className="text-xs font-black uppercase text-slate-500">
-              <th className="border-b border-slate-200 px-3 py-2">臾명빆</th>
+              <th className="border-b border-slate-200 px-3 py-2">문항</th>
               <th className="border-b border-slate-200 px-3 py-2">CITC</th>
-              <th className="border-b border-slate-200 px-3 py-2">CITC ?곹깭</th>
-              <th className="border-b border-slate-200 px-3 py-2">?쒓굅 ??alpha</th>
+              <th className="border-b border-slate-200 px-3 py-2">CITC 상태</th>
+              <th className="border-b border-slate-200 px-3 py-2">제거 시 alpha</th>
             </tr>
           </thead>
           <tbody>
@@ -590,14 +590,14 @@ function ReliabilityDistributionPanel({ data }: { data?: SurveyReliabilityRespon
   const total = data?.total_count ?? respondents.length
 
   const chartData = [
-    { label: '?깆떎', count: sincere, color: '#10b981' },
-    { label: '鍮꾩꽦??, count: insincere, color: '#ef4444' },
+    { label: '성실', count: sincere, color: '#10b981' },
+    { label: '비성실', count: insincere, color: '#ef4444' },
   ]
 
   if (total <= 0) {
     return (
       <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-        ?좊ː??遺꾪룷瑜??쒖떆???묐떟???꾩쭅 ?놁뒿?덈떎.
+        신뢰도 분포를 표시할 응답이 아직 없습니다.
       </p>
     )
   }
@@ -605,7 +605,7 @@ function ReliabilityDistributionPanel({ data }: { data?: SurveyReliabilityRespon
   return (
     <div className="space-y-4">
       <p className="text-sm font-bold text-slate-600">
-        珥??묐떟 {total}紐?(?깆떎 {sincere}紐?/ 鍮꾩꽦??{insincere}紐?
+        총 응답 {total}명 (성실 {sincere}명 / 비성실 {insincere}명)
       </p>
       <div className="h-64 w-full rounded-lg border border-slate-200 bg-slate-50 p-3">
         <ResponsiveContainer width="100%" height="100%">
@@ -614,7 +614,7 @@ function ReliabilityDistributionPanel({ data }: { data?: SurveyReliabilityRespon
             <XAxis dataKey="label" tick={{ fill: '#334155', fontSize: 12 }} />
             <YAxis allowDecimals={false} tick={{ fill: '#334155', fontSize: 12 }} />
             <Tooltip
-              formatter={(value) => [`${Number(value ?? 0)}紐?, '?묐떟 ??]}
+              formatter={(value) => [`${Number(value ?? 0)}명`, '응답 수']}
               cursor={{ fill: '#f1f5f9' }}
             />
             <Bar dataKey="count" radius={[6, 6, 0, 0]}>
@@ -633,7 +633,7 @@ function CategoryFeaturePanel({ rows }: { rows: CategoryFeatureSummary[] }) {
   if (rows.length === 0) {
     return (
       <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-        ?좏삎蹂꾨줈 吏묎퀎???쇰컲 臾명빆???꾩쭅 ?놁뒿?덈떎.
+        유형별로 집계할 일반 문항이 아직 없습니다.
       </p>
     )
   }
@@ -643,13 +643,13 @@ function CategoryFeaturePanel({ rows }: { rows: CategoryFeatureSummary[] }) {
       <table className="w-full min-w-[760px] border-separate border-spacing-0 text-left text-sm">
         <thead>
           <tr className="text-xs font-black uppercase text-slate-500">
-            <th className="border-b border-slate-200 px-3 py-2">?좏삎</th>
-            <th className="border-b border-slate-200 px-3 py-2">臾명빆 ??/th>
-            <th className="border-b border-slate-200 px-3 py-2">?덉쭏 臾몄젣 ??/th>
-            <th className="border-b border-slate-200 px-3 py-2">?덉쭏 臾몄젣 鍮꾩쑉</th>
-            <th className="border-b border-slate-200 px-3 py-2">援ъ꽦 ?됯퇏</th>
-            <th className="border-b border-slate-200 px-3 py-2">CITC ?됯퇏</th>
-            <th className="border-b border-slate-200 px-3 py-2">alpha(臾명빆 ?쒓굅 ?? ?됯퇏</th>
+            <th className="border-b border-slate-200 px-3 py-2">유형</th>
+            <th className="border-b border-slate-200 px-3 py-2">문항 수</th>
+            <th className="border-b border-slate-200 px-3 py-2">품질 문제 수</th>
+            <th className="border-b border-slate-200 px-3 py-2">품질 문제 비율</th>
+            <th className="border-b border-slate-200 px-3 py-2">구성 평균</th>
+            <th className="border-b border-slate-200 px-3 py-2">CITC 평균</th>
+            <th className="border-b border-slate-200 px-3 py-2">alpha(문항 제거 시) 평균</th>
           </tr>
         </thead>
         <tbody>
@@ -688,7 +688,7 @@ function ItemFeaturePanel({ rows }: { rows: ItemFeatureSnapshot[] }) {
   if (rows.length === 0) {
     return (
       <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-        臾명빆蹂?feature瑜??쒖떆???쇰컲 臾명빆???꾩쭅 ?놁뒿?덈떎.
+        문항별 feature를 표시할 일반 문항이 아직 없습니다.
       </p>
     )
   }
@@ -703,15 +703,15 @@ function ItemFeaturePanel({ rows }: { rows: ItemFeatureSnapshot[] }) {
                 <p className="text-sm font-black text-slate-900">Q{row.item_order}</p>
                 <p className="mt-1 text-sm text-slate-700">{row.question_text}</p>
                 <p className="mt-1 text-xs font-semibold text-indigo-700">
-                  ?좏삎: {row.item_category || '(誘몃텇瑜?'}
+                  유형: {row.item_category || '(미분류)'}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">
-                  ?덉쭏 {row.quality_status === 'unknown' ? '-' : row.quality_has_problem ? '臾몄젣' : 'OK'}
+                  품질 {row.quality_status === 'unknown' ? '-' : row.quality_has_problem ? '문제' : 'OK'}
                 </span>
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">
-                  援ъ꽦 {row.construct_combined_score == null ? '-' : row.construct_combined_score.toFixed(2)}
+                  구성 {row.construct_combined_score == null ? '-' : row.construct_combined_score.toFixed(2)}
                 </span>
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">
                   CITC {row.statistics_item_citc == null ? '-' : row.statistics_item_citc.toFixed(3)}
@@ -722,18 +722,18 @@ function ItemFeaturePanel({ rows }: { rows: ItemFeatureSnapshot[] }) {
 
           <div className="mt-4 grid gap-3 lg:grid-cols-3">
             <article className="rounded-lg bg-slate-50 p-3">
-              <h4 className="text-xs font-black uppercase text-slate-600">?덉쭏 Feature</h4>
+              <h4 className="text-xs font-black uppercase text-slate-600">품질 Feature</h4>
               <dl className="mt-2 space-y-1 text-sm text-slate-700">
                 <div className="flex justify-between gap-2">
-                  <dt>臾몄젣 ?щ?</dt>
+                  <dt>문제 여부</dt>
                   <dd>{row.quality_status === 'unknown' ? '-' : row.quality_has_problem ? 'problem' : 'ok'}</dd>
                 </div>
                 <div className="flex justify-between gap-2">
-                  <dt>?곹깭</dt>
+                  <dt>상태</dt>
                   <dd>{row.quality_status}</dd>
                 </div>
                 <div>
-                  <dt className="font-semibold">臾몄젣 移댄뀒怨좊━</dt>
+                  <dt className="font-semibold">문제 카테고리</dt>
                   <dd className="mt-1">
                     {row.quality_problem_categories.length > 0
                       ? row.quality_problem_categories.join(', ')
@@ -741,7 +741,7 @@ function ItemFeaturePanel({ rows }: { rows: ItemFeatureSnapshot[] }) {
                   </dd>
                 </div>
                 <div>
-                  <dt className="font-semibold">媛먯? ?쒗쁽</dt>
+                  <dt className="font-semibold">감지 표현</dt>
                   <dd className="mt-1">
                     {row.quality_detected_terms.length > 0
                       ? row.quality_detected_terms.join(', ')
@@ -752,7 +752,7 @@ function ItemFeaturePanel({ rows }: { rows: ItemFeatureSnapshot[] }) {
             </article>
 
             <article className="rounded-lg bg-slate-50 p-3">
-              <h4 className="text-xs font-black uppercase text-slate-600">援ъ꽦 Feature</h4>
+              <h4 className="text-xs font-black uppercase text-slate-600">구성 Feature</h4>
               <dl className="mt-2 space-y-1 text-sm text-slate-700">
                 <div className="flex justify-between gap-2">
                   <dt>Embedding</dt>
@@ -767,11 +767,11 @@ function ItemFeaturePanel({ rows }: { rows: ItemFeatureSnapshot[] }) {
                   <dd>{row.construct_combined_score == null ? '-' : row.construct_combined_score.toFixed(3)}</dd>
                 </div>
                 <div className="flex justify-between gap-2">
-                  <dt>?덉륫 CITC</dt>
+                  <dt>예측 CITC</dt>
                   <dd>{row.construct_predicted_citc == null ? '-' : row.construct_predicted_citc.toFixed(3)}</dd>
                 </div>
                 <div className="flex justify-between gap-2">
-                  <dt>?덉륫 Alpha ?곹뼢</dt>
+                  <dt>예측 Alpha 영향</dt>
                   <dd>
                     {row.construct_predicted_alpha_impact == null
                       ? '-'
@@ -779,25 +779,25 @@ function ItemFeaturePanel({ rows }: { rows: ItemFeatureSnapshot[] }) {
                   </dd>
                 </div>
                 <div className="flex justify-between gap-2">
-                  <dt>?곹깭</dt>
+                  <dt>상태</dt>
                   <dd>{row.construct_status}</dd>
                 </div>
               </dl>
             </article>
 
             <article className="rounded-lg bg-slate-50 p-3">
-              <h4 className="text-xs font-black uppercase text-slate-600">?듦퀎 Feature</h4>
+              <h4 className="text-xs font-black uppercase text-slate-600">통계 Feature</h4>
               <dl className="mt-2 space-y-1 text-sm text-slate-700">
                 <div className="flex justify-between gap-2">
                   <dt>CITC</dt>
                   <dd>{row.statistics_item_citc == null ? '-' : row.statistics_item_citc.toFixed(3)}</dd>
                 </div>
                 <div className="flex justify-between gap-2">
-                  <dt>CITC ?곹깭</dt>
+                  <dt>CITC 상태</dt>
                   <dd>{row.statistics_item_citc_status}</dd>
                 </div>
                 <div className="flex justify-between gap-2">
-                  <dt>臾명빆 ?쒓굅 ??alpha</dt>
+                  <dt>문항 제거 시 alpha</dt>
                   <dd>
                     {row.statistics_alpha_if_item_deleted == null
                       ? '-'
@@ -809,7 +809,7 @@ function ItemFeaturePanel({ rows }: { rows: ItemFeatureSnapshot[] }) {
           </div>
 
           <details className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
-            <summary className="cursor-pointer font-bold">?먮낯 feature JSON 蹂닿린</summary>
+            <summary className="cursor-pointer font-bold">원본 feature JSON 보기</summary>
             <pre className="mt-2 overflow-auto rounded-md bg-slate-900 p-3 text-[11px] text-slate-100">
 {JSON.stringify(
   {
@@ -883,37 +883,27 @@ export function ResultsPage() {
     mutationFn: () => evaluateSurveyQuality(id),
     onSuccess: (data) => {
       console.log('[results] quality mutation response', data)
-      queryClient.setQueryData(['survey-quality', id], data)
       queryClient.invalidateQueries({ queryKey: ['survey-quality', id] })
       const llmFailureMessage = summarizeQualityLlmFailures(data.results)
 
       if (llmFailureMessage) {
         pushToast({
           type: 'error',
-          title: '臾명빆 ?덉쭏 ?됯? ?ㅽ뙣',
+          title: '문항 품질 평가 실패',
           description: llmFailureMessage,
         })
         return
       }
 
       setQualityRowsOpen(true)
-      if ((data.results?.length ?? 0) === 0) {
-        pushToast({
-          type: 'error',
-          title: '문항 품질 평가 결과 없음',
-          description: '평가 대상(normal) 문항이 없는지 확인해주세요.',
-        })
-        return
-      }
-
       pushToast({ type: 'success', title: '문항 품질 평가 완료' })
     },
     onError: (error) => {
       console.error('[results] quality mutation failed', error)
       pushToast({
         type: 'error',
-        title: '臾명빆 ?덉쭏 ?됯? ?ㅽ뙣',
-        description: getErrorMessage(error, '?됯? ?ㅽ뻾 以??ㅻ쪟媛 諛쒖깮?덉뒿?덈떎.'),
+        title: '문항 품질 평가 실패',
+        description: getErrorMessage(error, '평가 실행 중 오류가 발생했습니다.'),
       })
     },
   })
@@ -924,14 +914,14 @@ export function ResultsPage() {
       console.log('[results] construct mutation response', data)
       queryClient.invalidateQueries({ queryKey: ['survey-construct', id] })
       setConstructRowsOpen(true)
-      pushToast({ type: 'success', title: '臾명빆 援ъ꽦 ??밸룄 ?됯? ?꾨즺' })
+      pushToast({ type: 'success', title: '문항 구성 타당도 평가 완료' })
     },
     onError: (error) => {
       console.error('[results] construct mutation failed', error)
       pushToast({
         type: 'error',
-        title: '臾명빆 援ъ꽦 ??밸룄 ?됯? ?ㅽ뙣',
-        description: getErrorMessage(error, '?됯? ?ㅽ뻾 以??ㅻ쪟媛 諛쒖깮?덉뒿?덈떎.'),
+        title: '문항 구성 타당도 평가 실패',
+        description: getErrorMessage(error, '평가 실행 중 오류가 발생했습니다.'),
       })
     },
   })
@@ -942,14 +932,14 @@ export function ResultsPage() {
       console.log('[results] statistics mutation response', data)
       queryClient.invalidateQueries({ queryKey: ['survey-statistics', id] })
       setStatisticsRowsOpen(true)
-      pushToast({ type: 'success', title: '?듦퀎 遺꾩꽍 ?꾨즺' })
+      pushToast({ type: 'success', title: '통계 분석 완료' })
     },
     onError: (error) => {
       console.error('[results] statistics mutation failed', error)
       pushToast({
         type: 'error',
-        title: '?듦퀎 遺꾩꽍 ?ㅽ뙣',
-        description: getErrorMessage(error, '?묐떟 ?섍? 異⑸텇?쒖? ?뺤씤??二쇱꽭??'),
+        title: '통계 분석 실패',
+        description: getErrorMessage(error, '응답 수가 충분한지 확인해 주세요.'),
       })
     },
   })
@@ -957,7 +947,7 @@ export function ResultsPage() {
   const evaluationPending =
     qualityMutation.isPending || constructMutation.isPending || statisticsMutation.isPending
 
-  const qualityResults = qualityQuery.data?.results ?? qualityMutation.data?.results ?? []
+  const qualityResults = qualityQuery.data?.results ?? []
   const constructResults = constructQuery.data?.results ?? []
   const surveyItems = surveyQuery.data?.items ?? []
   const statisticsItems = statisticsQuery.data?.items ?? []
@@ -1102,7 +1092,7 @@ export function ResultsPage() {
     >()
 
     itemFeatureRows.forEach((row) => {
-      const categories = row.category_tokens.length > 0 ? row.category_tokens : ['(誘몃텇瑜?']
+      const categories = row.category_tokens.length > 0 ? row.category_tokens : ['(미분류)']
       categories.forEach((category) => {
         const stats = grouped.get(category) ?? {
           itemCount: 0,
@@ -1158,8 +1148,8 @@ export function ResultsPage() {
     if (!id || id === 'demo') {
       pushToast({
         type: 'error',
-        title: 'CSV ?ㅼ슫濡쒕뱶 ?ㅽ뙣',
-        description: '?좏슚???ㅻЦ ID媛 ?놁뒿?덈떎.',
+        title: 'CSV 다운로드 실패',
+        description: '유효한 설문 ID가 없습니다.',
       })
       return
     }
@@ -1167,12 +1157,12 @@ export function ResultsPage() {
     setDownloadingFeaturesCsv(true)
     try {
       await downloadSurveyResponseFeaturesCsv(id)
-      pushToast({ type: 'success', title: '?묐떟 feature CSV ?ㅼ슫濡쒕뱶 ?꾨즺' })
+      pushToast({ type: 'success', title: '응답 feature CSV 다운로드 완료' })
     } catch (error) {
       pushToast({
         type: 'error',
-        title: 'CSV ?ㅼ슫濡쒕뱶 ?ㅽ뙣',
-        description: getErrorMessage(error, 'CSV ?앹꽦 以??ㅻ쪟媛 諛쒖깮?덉뒿?덈떎.'),
+        title: 'CSV 다운로드 실패',
+        description: getErrorMessage(error, 'CSV 생성 중 오류가 발생했습니다.'),
       })
     } finally {
       setDownloadingFeaturesCsv(false)
@@ -1183,8 +1173,8 @@ export function ResultsPage() {
     if (!id || id === 'demo') {
       pushToast({
         type: 'error',
-        title: 'CSV ?ㅼ슫濡쒕뱶 ?ㅽ뙣',
-        description: '?좏슚???ㅻЦ ID媛 ?놁뒿?덈떎.',
+        title: 'CSV 다운로드 실패',
+        description: '유효한 설문 ID가 없습니다.',
       })
       return
     }
@@ -1192,12 +1182,12 @@ export function ResultsPage() {
     setDownloadingItemEvaluationsCsv(true)
     try {
       await downloadSurveyItemEvaluationsCsv(id)
-      pushToast({ type: 'success', title: '臾명빆 ?됯? feature CSV ?ㅼ슫濡쒕뱶 ?꾨즺' })
+      pushToast({ type: 'success', title: '문항 평가 feature CSV 다운로드 완료' })
     } catch (error) {
       pushToast({
         type: 'error',
-        title: 'CSV ?ㅼ슫濡쒕뱶 ?ㅽ뙣',
-        description: getErrorMessage(error, 'CSV ?앹꽦 以??ㅻ쪟媛 諛쒖깮?덉뒿?덈떎.'),
+        title: 'CSV 다운로드 실패',
+        description: getErrorMessage(error, 'CSV 생성 중 오류가 발생했습니다.'),
       })
     } finally {
       setDownloadingItemEvaluationsCsv(false)
@@ -1209,15 +1199,15 @@ export function ResultsPage() {
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
-            <p className="text-sm font-bold text-teal-700">?ㅻЦ ID: {id}</p>
+            <p className="text-sm font-bold text-teal-700">설문 ID: {id}</p>
             <h1 className="mt-1 text-2xl font-black text-slate-950">
-              {surveyQuery.data?.title ?? '?묐떟 諛??됯? 寃곌낵'}
+              {surveyQuery.data?.title ?? '응답 및 평가 결과'}
             </h1>
             <p className="mt-1 text-sm leading-6 text-slate-600">
-              ?묐떟 ?좊ː?? 臾명빆 ?됯?, ?듦퀎 遺꾩꽍 寃곌낵瑜????붾㈃?먯꽌 ?뺤씤?⑸땲??
+              응답 신뢰도, 문항 평가, 통계 분석 결과를 한 화면에서 확인합니다.
             </p>
           </div>
-          {surveyQuery.isLoading ? <LoadingSpinner compact label="?ㅻЦ 議고쉶 以? /> : null}
+          {surveyQuery.isLoading ? <LoadingSpinner compact label="설문 조회 중" /> : null}
         </div>
       </section>
 
@@ -1228,22 +1218,22 @@ export function ResultsPage() {
               <ShieldCheck size={22} />
             </div>
             <div>
-              <h2 className="text-lg font-black text-slate-950">?묐떟 ?좊ː???붿빟</h2>
-              <p className="mt-1 text-sm text-slate-600">?묐떟 ?쒖텧 吏곹썑 怨꾩궛??寃곌낵?낅땲??</p>
+              <h2 className="text-lg font-black text-slate-950">응답 신뢰도 요약</h2>
+              <p className="mt-1 text-sm text-slate-600">응답 제출 직후 계산된 결과입니다.</p>
             </div>
           </div>
           {responseScore != null ? (
             <ReliabilityBadge score={responseScore} showScore />
           ) : (
             <span className="rounded-md bg-slate-100 px-3 py-2 text-sm font-bold text-slate-600">
-              ?묐떟 寃곌낵 ?놁쓬
+              응답 결과 없음
             </span>
           )}
         </div>
 
         <p className="mt-3 text-sm font-semibold text-slate-600">
-          ?꾩껜 ?묐떟 湲곗? ?좊ː??遺꾪룷???꾨옒 ?듦퀎 ?뱀뀡?먯꽌 ?뺤씤?????덉뒿?덈떎.
-          {` (?꾩옱 ?꾩쟻 ?묐떟 ${reliabilityRespondentCount}紐?`}
+          전체 응답 기준 신뢰도 분포는 아래 통계 섹션에서 확인할 수 있습니다.
+          {` (현재 누적 응답 ${reliabilityRespondentCount}명)`}
         </p>
 
         <div className="mt-4 flex flex-wrap gap-2">
@@ -1254,9 +1244,9 @@ export function ResultsPage() {
             onClick={handleDownloadFeaturesCsv}
           >
             {downloadingFeaturesCsv ? (
-              <LoadingSpinner compact label="CSV ?앹꽦 以? />
+              <LoadingSpinner compact label="CSV 생성 중" />
             ) : (
-              '?묐떟 feature CSV ?ㅼ슫濡쒕뱶'
+              '응답 feature CSV 다운로드'
             )}
           </button>
           <button
@@ -1266,16 +1256,16 @@ export function ResultsPage() {
             onClick={handleDownloadItemEvaluationsCsv}
           >
             {downloadingItemEvaluationsCsv ? (
-              <LoadingSpinner compact label="CSV ?앹꽦 以? />
+              <LoadingSpinner compact label="CSV 생성 중" />
             ) : (
-              '臾명빆 ?됯? feature CSV ?ㅼ슫濡쒕뱶'
+              '문항 평가 feature CSV 다운로드'
             )}
           </button>
         </div>
 
         {responseScore != null ? (
           <div className="mt-5 space-y-4">
-            <ScoreBar score={responseScore} label={`?곹깭: ${statusLabel(responseStatus)}`} />
+            <ScoreBar score={responseScore} label={`상태: ${statusLabel(responseStatus)}`} />
             <DetailButton
               open={responseDetailsOpen}
               onClick={() => setResponseDetailsOpen((open) => !open)}
@@ -1286,7 +1276,7 @@ export function ResultsPage() {
           </div>
         ) : (
           <p className="mt-4 rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-            ?묐떟 ?붾㈃?먯꽌 ?쒖텧???꾨즺?섎㈃ ?좊ː???붿빟???쒖떆?⑸땲??
+            응답 화면에서 제출을 완료하면 신뢰도 요약이 표시됩니다.
           </p>
         )}
       </section>
@@ -1298,10 +1288,10 @@ export function ResultsPage() {
               <ClipboardCheck size={20} />
             </div>
             <div>
-              <h2 className="text-lg font-black text-slate-950">臾명빆 ?덉쭏 ?됯?</h2>
+              <h2 className="text-lg font-black text-slate-950">문항 품질 평가</h2>
               <p className="mt-1 text-sm text-slate-600">
-                ?쇰컲 臾명빆留?臾몄젣 ?щ?瑜??쒖떆?섍퀬, ??Ц???⑥젙臾명빆? ?쒓렇濡?援щ텇?⑸땲??
-                臾몄젣 臾명빆 移대뱶瑜??대┃?섎㈃ LLM 肄붾찘?몄? ?쒖븞臾몄쓣 諛붾줈 ?뺤씤?????덉뒿?덈떎.
+                일반 문항만 문제 여부를 표시하고, 역문항/함정문항은 태그로 구분합니다.
+                문제 문항 카드를 클릭하면 LLM 코멘트와 제안문을 바로 확인할 수 있습니다.
               </p>
             </div>
           </div>
@@ -1311,20 +1301,20 @@ export function ResultsPage() {
             disabled={evaluationPending}
             onClick={() => qualityMutation.mutate()}
           >
-            {qualityMutation.isPending ? <LoadingSpinner compact label="?됯? 以? /> : '臾명빆 ?덉쭏 ?됯?'}
+            {qualityMutation.isPending ? <LoadingSpinner compact label="평가 중" /> : '문항 품질 평가'}
           </button>
         </div>
 
         <p className="mb-4 text-sm font-bold text-slate-600">
-          ?꾩껜 臾명빆: {qualityDisplayItems.length}媛?/ ?됯? ???臾명빆: {evaluationTargetItems.length}
-          媛?/ ?됯? ?꾨즺: {evaluatedQualityCount}媛?/ 臾몄젣 臾명빆: {problemQualityCount}媛?
+          전체 문항: {qualityDisplayItems.length}개 / 평가 대상 문항: {evaluationTargetItems.length}
+          개 / 평가 완료: {evaluatedQualityCount}개 / 문제 문항: {problemQualityCount}개
         </p>
 
         <div className="mb-4">
           <DetailButton
             open={qualityRowsOpen}
             onClick={() => setQualityRowsOpen((open) => !open)}
-            label={`臾명빆 紐⑸줉 蹂닿린 (${qualityDisplayItems.length}媛?`}
+            label={`문항 목록 보기 (${qualityDisplayItems.length}개)`}
           />
         </div>
 
@@ -1345,7 +1335,7 @@ export function ResultsPage() {
               ))
             ) : (
               <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                ??λ맂 ?덉쭏 ?됯? 寃곌낵媛 ?놁뒿?덈떎. 踰꾪듉???뚮윭 ?됯?瑜??ㅽ뻾??二쇱꽭??
+                저장된 품질 평가 결과가 없습니다. 버튼을 눌러 평가를 실행해 주세요.
               </p>
             )}
           </div>
@@ -1359,8 +1349,8 @@ export function ResultsPage() {
               <FileText size={20} />
             </div>
             <div>
-              <h2 className="text-lg font-black text-slate-950">臾명빆 援ъ꽦 ??밸룄 ?됯?</h2>
-              <p className="mt-1 text-sm text-slate-600">?쇰컲 臾명빆 湲곗??쇰줈 寃곌낵瑜??쒓났?⑸땲??</p>
+              <h2 className="text-lg font-black text-slate-950">문항 구성 타당도 평가</h2>
+              <p className="mt-1 text-sm text-slate-600">일반 문항 기준으로 결과를 제공합니다.</p>
             </div>
           </div>
           <button
@@ -1370,9 +1360,9 @@ export function ResultsPage() {
             onClick={() => constructMutation.mutate()}
           >
             {constructMutation.isPending ? (
-              <LoadingSpinner compact label="?됯? 以? />
+              <LoadingSpinner compact label="평가 중" />
             ) : (
-              '臾명빆 援ъ꽦 ??밸룄 ?됯?'
+              '문항 구성 타당도 평가'
             )}
           </button>
         </div>
@@ -1381,12 +1371,12 @@ export function ResultsPage() {
           <DetailButton
             open={constructRowsOpen}
             onClick={() => setConstructRowsOpen((open) => !open)}
-            label={`臾명빆 紐⑸줉 蹂닿린 (${constructDisplayItems.length}媛?`}
+            label={`문항 목록 보기 (${constructDisplayItems.length}개)`}
           />
         </div>
 
         <p className="mb-4 text-sm font-bold text-slate-600">
-          ?됯? ???臾명빆: {normalSurveyItems.length}媛?/ ?됯? ?꾨즺: {evaluatedConstructCount}媛?
+          평가 대상 문항: {normalSurveyItems.length}개 / 평가 완료: {evaluatedConstructCount}개
         </p>
 
         {constructRowsOpen ? (
@@ -1397,7 +1387,7 @@ export function ResultsPage() {
               ))
             ) : (
               <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                ??λ맂 援ъ꽦 ??밸룄 ?됯? 寃곌낵媛 ?놁뒿?덈떎.
+                저장된 구성 타당도 평가 결과가 없습니다.
               </p>
             )}
           </div>
@@ -1405,9 +1395,9 @@ export function ResultsPage() {
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-black text-slate-950">?좏삎蹂?Feature ?붿빟</h2>
+        <h2 className="text-lg font-black text-slate-950">유형별 Feature 요약</h2>
         <p className="mt-1 text-sm text-slate-600">
-          臾명빆??`?좏삎` 媛믪쓣 `/`濡?遺꾨━??吏묎퀎?섎ŉ, 以묐났 ?좏삎? ?먮룞 ?쒓굅?⑸땲??
+          문항의 `유형` 값을 `/`로 분리해 집계하며, 중복 유형은 자동 제거됩니다.
         </p>
         <div className="mt-4">
           <CategoryFeaturePanel rows={categoryFeatureSummaries} />
@@ -1415,15 +1405,15 @@ export function ResultsPage() {
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-black text-slate-950">臾명빆蹂?Feature ?곸꽭</h2>
+        <h2 className="text-lg font-black text-slate-950">문항별 Feature 상세</h2>
         <p className="mt-1 text-sm text-slate-600">
-          臾명빆留덈떎 ?덉쭏/援ъ꽦/?듦퀎 feature瑜???踰덉뿉 ?뺤씤?????덉뒿?덈떎.
+          문항마다 품질/구성/통계 feature를 한 번에 확인할 수 있습니다.
         </p>
         <div className="mt-4">
           <DetailButton
             open={itemFeatureRowsOpen}
             onClick={() => setItemFeatureRowsOpen((open) => !open)}
-            label={`臾명빆蹂?feature ?쇱튂湲?(${itemFeatureRows.length}媛?`}
+            label={`문항별 feature 펼치기 (${itemFeatureRows.length}개)`}
           />
         </div>
         {itemFeatureRowsOpen ? (
@@ -1440,9 +1430,9 @@ export function ResultsPage() {
               <BarChart3 size={20} />
             </div>
             <div>
-              <h2 className="text-lg font-black text-slate-950">?듦퀎 遺꾩꽍</h2>
+              <h2 className="text-lg font-black text-slate-950">통계 분석</h2>
               <p className="mt-1 text-sm text-slate-600">
-                ?꾩옱 ??λ맂 ?꾩꽦 ?묐떟 湲곗??쇰줈 Cronbach alpha? CITC瑜??ㅼ떆 怨꾩궛??理쒖떊?뷀븷 ???덉뒿?덈떎.
+                현재 저장된 완성 응답 기준으로 Cronbach alpha와 CITC를 다시 계산해 최신화할 수 있습니다.
               </p>
             </div>
           </div>
@@ -1456,9 +1446,9 @@ export function ResultsPage() {
             }}
           >
             {statisticsMutation.isPending ? (
-              <LoadingSpinner compact label="CITC 理쒖떊??以? />
+              <LoadingSpinner compact label="CITC 최신화 중" />
             ) : (
-              '?꾩옱 ?묐떟?쇰줈 CITC 理쒖떊??
+              '현재 응답으로 CITC 최신화'
             )}
           </button>
         </div>
@@ -1466,21 +1456,21 @@ export function ResultsPage() {
         {statisticsQuery.isError ? (
           <div className="mb-4 flex items-center gap-2 rounded-lg bg-amber-50 p-4 text-sm font-semibold text-amber-900">
             <AlertTriangle size={18} />
-            ?듦퀎 寃곌낵瑜?議고쉶?섏? 紐삵뻽?듬땲?? ?꾩쭅 遺꾩꽍 寃곌낵媛 ?놁쓣 ???덉뒿?덈떎.
+            통계 결과를 조회하지 못했습니다. 아직 분석 결과가 없을 수 있습니다.
           </div>
         ) : null}
 
         <div className="mb-5 rounded-lg border border-slate-200 p-4">
-          <h3 className="text-base font-black text-slate-950">?묐떟 ?좊ː??遺꾪룷</h3>
+          <h3 className="text-base font-black text-slate-950">응답 신뢰도 분포</h3>
           <p className="mt-1 text-sm text-slate-600">
-            理쒓렐 1嫄댁씠 ?꾨땶 ?꾩껜 ?묐떟 湲곗??쇰줈 ??以????몄썝??蹂댁뿬以띾땲??
+            최근 1건이 아닌 전체 응답 기준으로 상/중/하 인원을 보여줍니다.
           </p>
           <div className="mt-3">
             {reliabilityQuery.isLoading ? (
-              <LoadingSpinner compact label="?좊ː??遺꾪룷 遺덈윭?ㅻ뒗 以? />
+              <LoadingSpinner compact label="신뢰도 분포 불러오는 중" />
             ) : reliabilityQuery.isError ? (
               <div className="rounded-lg bg-amber-50 p-4 text-sm font-semibold text-amber-900">
-                ?좊ː??遺꾪룷瑜?遺덈윭?ㅼ? 紐삵뻽?듬땲??
+                신뢰도 분포를 불러오지 못했습니다.
               </div>
             ) : (
               <ReliabilityDistributionPanel data={reliabilityQuery.data} />
@@ -1492,7 +1482,7 @@ export function ResultsPage() {
           <DetailButton
             open={statisticsRowsOpen}
             onClick={() => setStatisticsRowsOpen((open) => !open)}
-            label="臾명빆 ?듦퀎 ?곸꽭 ?쇱튂湲?
+            label="문항 통계 상세 펼치기"
           />
         </div>
 
@@ -1504,8 +1494,8 @@ export function ResultsPage() {
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-base font-black text-slate-950">?붾쾭源??묐떟(JSON)</h2>
-        <p className="mt-1 text-sm text-slate-600">?됯? API ?묐떟 ?먮Ц???뺤씤?????덉뒿?덈떎.</p>
+        <h2 className="text-base font-black text-slate-950">디버깅 응답(JSON)</h2>
+        <p className="mt-1 text-sm text-slate-600">평가 API 응답 원문을 확인할 수 있습니다.</p>
         <pre className="mt-3 max-h-96 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">
 {JSON.stringify(
   {
@@ -1527,5 +1517,4 @@ export function ResultsPage() {
     </div>
   )
 }
-
 
