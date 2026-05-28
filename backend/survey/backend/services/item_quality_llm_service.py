@@ -147,6 +147,52 @@ def normalize_llm_quality_result(parsed):
     return normalized
 
 
+TERM_CATEGORY_TO_PROBLEM_CATEGORIES = {
+    "ambiguous": {"ambiguous_time", "answerability_issue"},
+    "negative": {"negative_wording", "clarity_issue"},
+    "leading": {"leading", "neutrality_issue"},
+    "double_barreled": {"double_barreled", "single_concept_issue"},
+}
+
+
+def _filter_quality_result_to_question_scope(result, question_text):
+    question_lower = _normalize_text(question_text).lower()
+
+    def _in_question(term):
+        token = str(term or "").strip().lower()
+        return bool(token) and token in question_lower
+
+    filtered_detected_terms = [
+        term for term in _to_string_list(result.get("detected_terms")) if _in_question(term)
+    ]
+
+    filtered_assessments = []
+    for row in result.get("term_assessments") or []:
+        if not isinstance(row, dict):
+            continue
+        term = row.get("term")
+        if not _in_question(term):
+            continue
+        filtered_assessments.append(row)
+
+    result["detected_terms"] = filtered_detected_terms
+    result["term_assessments"] = filtered_assessments
+
+    supported_categories = {
+        str(row.get("category", "")).strip().lower()
+        for row in filtered_assessments
+        if str(row.get("context_effect", "")).strip().lower() == "problem"
+    }
+
+    problem_categories = set(_to_string_list(result.get("problem_categories")))
+    for term_category, mapped_problem_categories in TERM_CATEGORY_TO_PROBLEM_CATEGORIES.items():
+        if term_category not in supported_categories:
+            problem_categories -= mapped_problem_categories
+
+    result["problem_categories"] = sorted(problem_categories)
+    return result
+
+
 def _clean_rewrite_text(text):
     if not isinstance(text, str):
         return ""
@@ -184,13 +230,17 @@ Primary objective:
 
 Task:
 1) Use the term dictionary as the primary risk detector.
-2) Judge in full context of question + options.
-3) If options provide concrete timeframe/frequency anchors (e.g., "지난 2주", "주 1~2회"),
-   treat ambiguous-frequency wording as acceptable in context.
+2) Detect risky terms from the Question text ONLY.
+   - Never detect risky terms from Options text.
+   - If "anhda/eopda" appears only in Options, do NOT treat it as a detected term.
+3) Use Options ONLY to decide whether ambiguity in the Question is resolved.
+4) If options provide concrete timeframe/frequency anchors (e.g., "past 2 weeks", "1-2 times per week"),
+   treat ambiguous-frequency wording in the Question as acceptable in context.
 
 Option recovery rule (important):
 - If options provide concrete anchors (frequency/timeframe/intensity), ambiguity risk may recover.
 - If recovered, do not include that term in unresolved problem categories.
+- Keep recovered ambiguous terms as context_effect="acceptable" if needed.
 
 Rewrite policy:
 - If any context_effect="problem" term remains unresolved, suggested_rewrite must be one Korean sentence.
@@ -221,16 +271,16 @@ Return ONLY JSON with this schema:
       "category": "ambiguous|negative|leading|double_barreled",
       "context_effect": "problem|acceptable",
       "severity": 0|1|2,
-      "reason": "짧은 한국어 근거 1문장"
+      "reason": "short Korean rationale in 1 sentence"
     }}
   ],
   "option_clarity_score": 0-10,
   "option_recovery": {{
     "applied": true|false,
-    "reason": "한국어 1문장"
+    "reason": "Korean 1 sentence"
   }},
-  "llm_comment": "한국어 2~3문장 진단 요약",
-  "suggested_rewrite": "필요할 때만 한국어 제안본 문장 1개, 문제 없으면 빈 문자열"
+  "llm_comment": "Korean diagnosis summary in 2-3 sentences",
+  "suggested_rewrite": "one Korean rewritten sentence only when needed; empty string if no issue"
 }}
 """
 
@@ -243,6 +293,8 @@ Return ONLY JSON with this schema:
                     "Return ONLY valid JSON. "
                     "Use Korean for all free-text fields. "
                     "Focus on dictionary-based unresolved wording problems only. "
+                    "Detect risky terms from Question text only, never from Options. "
+                    "Use Options only for ambiguity recovery. "
                     "If risk is resolved by options, reflect it explicitly in option_recovery."
                 ),
             },
@@ -255,40 +307,38 @@ Return ONLY JSON with this schema:
     if not isinstance(parsed, dict):
         raise ValueError(f"LLM item quality JSON parse failed. raw={content!r}")
 
-    return normalize_llm_quality_result(parsed)
+    normalized = normalize_llm_quality_result(parsed)
+    return _filter_quality_result_to_question_scope(normalized, question_text)
 
 
 def generate_rewrite_with_llm(question_text, options, problem_categories=None, detected_terms=None, llm_comment=None):
     prompt = f"""
-당신은 설문 문항 수정 전문가입니다.
-아래 문항을 한국어 한 문장으로 수정하세요.
+You are an expert in rewriting survey items.
+Rewrite the item into exactly one Korean sentence.
 
-수정 목적:
-- 문제 원인은 단어사전(모호어/부정어/유도어/이중질문 단서) 기반입니다.
-- 감점된 개념을 직접 해소해야 합니다.
-- 모호한 빈도/시간 표현은 구체 기준(예: 지난 2주, 주 n회)을 넣어 명확히 하세요.
-- 이중질문이면 한 문항 한 개념으로 줄이세요.
-- 부정표현이면 가능한 긍정형으로 바꾸세요.
-- 단, 보기에 이미 구체적인 시간/기간/빈도 기준이 충분하면 불필요한 수정을 피하세요.
+Goals:
+- Resolve the detected dictionary-based issues directly.
+- Keep the original measurement intent and answer format.
+- If ambiguity is about time/frequency, make time/frequency concrete when needed.
+- If options already provide enough concrete anchors, avoid unnecessary rewriting.
 
-제약:
-- 출력은 문항 1문장만.
-- 설명, 라벨, 따옴표, JSON 금지.
-- 원래 측정 의도와 응답 형식은 유지.
+Constraints:
+- Output exactly one Korean sentence only.
+- No labels, no explanation, no JSON, no quotes.
 
-원문 문항:
+Original question:
 {question_text}
 
-보기:
+Options:
 {json.dumps(options or [], ensure_ascii=False)}
 
-문제 카테고리:
+Problem categories:
 {json.dumps(problem_categories or [], ensure_ascii=False)}
 
-탐지 용어:
+Detected terms:
 {json.dumps(detected_terms or [], ensure_ascii=False)}
 
-진단 코멘트:
+Diagnosis note:
 {llm_comment or ""}
 """
 
@@ -297,7 +347,7 @@ def generate_rewrite_with_llm(question_text, options, problem_categories=None, d
         messages=[
             {
                 "role": "system",
-                "content": "한국어 한 문장만 출력하세요. 설명 없이 문항 문장만 출력하세요.",
+                "content": "Return one Korean rewritten sentence only. No labels or extra explanation.",
             },
             {"role": "user", "content": prompt},
         ],
@@ -316,7 +366,13 @@ def _is_time_or_frequency_anchor(text):
     if not lowered:
         return False
 
-    if re.search(r"\d+\s*(회|번|일|주|개월|달|월|년|시간|분)", lowered):
+    numeric_patterns = (
+        r"\d+\s*(회|번|주|개월|달|년|일|시간|분)",
+        r"(지난|최근)\s*\d+\s*(주|개월|달|년|일)",
+        r"주\s*\d+\s*[-~]\s*\d+\s*회",
+        r"\d+\s*[-~]\s*\d+\s*회",
+    )
+    if any(re.search(pattern, lowered) for pattern in numeric_patterns):
         return True
 
     anchor_hints = (
@@ -327,7 +383,7 @@ def _is_time_or_frequency_anchor(text):
         "거의 매일",
         "전혀",
         "항상",
-        "주 1회",
+        "주 1",
         "주 2",
         "주 3",
         "2주",
@@ -341,7 +397,13 @@ def _is_concrete_time_frequency_anchor(text):
     if not lowered:
         return False
 
-    if re.search(r"\d+\s*(회|번|일|주|개월|달|월|년|시간|분)", lowered):
+    numeric_patterns = (
+        r"\d+\s*(회|번|주|개월|달|년|일|시간|분)",
+        r"(지난|최근)\s*\d+\s*(주|개월|달|년|일)",
+        r"주\s*\d+\s*[-~]\s*\d+\s*회",
+        r"\d+\s*[-~]\s*\d+\s*회",
+    )
+    if any(re.search(pattern, lowered) for pattern in numeric_patterns):
         return True
 
     concrete_hints = (
@@ -354,9 +416,9 @@ def _is_concrete_time_frequency_anchor(text):
         "주 3",
         "2주",
         "4주",
-        "한 달",
-        "1달",
-        "두 달",
+        "전혀",
+        "1회",
+        "항상",
     )
     return any(hint in lowered for hint in concrete_hints)
 
@@ -369,8 +431,14 @@ def _estimate_dictionary_option_clarity_score(options):
     anchor_count = sum(1 for option in option_texts if _is_time_or_frequency_anchor(option))
     anchor_ratio = anchor_count / len(option_texts)
 
-    has_extreme_low = any("전혀" in option or "없음" in option or "아니다" in option for option in option_texts)
-    has_extreme_high = any("항상" in option or "매우" in option or "거의 매일" in option for option in option_texts)
+    has_extreme_low = any(
+        "전혀" in option or "없음" in option or "아니다" in option
+        for option in option_texts
+    )
+    has_extreme_high = any(
+        "항상" in option or "매우" in option or "거의 매일" in option
+        for option in option_texts
+    )
     extreme_bonus = 0.15 if has_extreme_low and has_extreme_high else 0.0
 
     score = (anchor_ratio + extreme_bonus) * 10.0
@@ -410,9 +478,9 @@ def _rewrite_by_dictionary_rules(question_text, unresolved_terms, unresolved_cat
         "가끔": "지난 2주 동안 주 1~2회",
         "보통": "중간 수준(주 2~3회)",
         "대체로": "대부분의 경우",
-        "적당히": "명확한 기준에 따라",
+        "상당히": "명확한 기준에 따라",
         "충분히": "기준을 충족할 만큼",
-        "조금": "낮은 수준으로",
+        "조금": "약간의 수준으로",
         "많이": "높은 수준으로",
     }
     for term in unresolved_terms:
@@ -421,7 +489,7 @@ def _rewrite_by_dictionary_rules(question_text, unresolved_terms, unresolved_cat
             rewritten = rewritten.replace(term, replacement, 1)
 
     if "double_barreled" in unresolved_categories or "single_concept_issue" in unresolved_categories:
-        rewritten = re.split(r"(그리고|및|또는|거나)", rewritten, maxsplit=1)[0].strip()
+        rewritten = re.split(r"(洹몃━怨?諛??먮뒗|嫄곕굹)", rewritten, maxsplit=1)[0].strip()
 
     rewritten = re.sub(r"\s+", " ", rewritten).strip()
     if not rewritten:
@@ -455,9 +523,9 @@ def evaluate_item_with_dictionary_rules(question_text, options):
             "context_effect": context_effect,
             "severity": 0 if resolved else 2,
             "reason": (
-                "보기에 구체 기준이 있어 해석 위험이 완화되었습니다."
+                "蹂닿린??援ъ껜 湲곗????덉뼱 ?댁꽍 ?꾪뿕???꾪솕?섏뿀?듬땲??"
                 if resolved
-                else "문항 단독 해석 시 응답자마다 의미 기준이 달라질 수 있습니다."
+                else "臾명빆 ?⑤룆 ?댁꽍 ???묐떟?먮쭏???섎? 湲곗????щ씪吏????덉뒿?덈떎."
             ),
         })
         if not resolved:
@@ -472,10 +540,22 @@ def evaluate_item_with_dictionary_rules(question_text, options):
                 unresolved_categories.add("ambiguous_time")
                 unresolved_categories.add("answerability_issue")
 
+    negative_hits = []
     for term in NEGATIVE_TERMS:
         t = str(term).strip()
         if t and t in lowered_question:
-            record_term(t, "negative", False)
+            negative_hits.append(t)
+
+    if negative_hits:
+        # Reverse-coded/negation wording can be intentional in surveys.
+        # If only one negation cue exists and no other unresolved issues were found,
+        # do not force it to problem.
+        allow_single_negation = len(negative_hits) == 1 and len(unresolved_categories) == 0
+
+        for t in negative_hits:
+            record_term(t, "negative", allow_single_negation)
+
+        if not allow_single_negation:
             unresolved_categories.add("negative_wording")
             unresolved_categories.add("clarity_issue")
 
@@ -493,7 +573,7 @@ def evaluate_item_with_dictionary_rules(question_text, options):
             unresolved_categories.add("double_barreled")
             unresolved_categories.add("single_concept_issue")
 
-    # 중복 제거하면서 순서 유지
+    # 以묐났 ?쒓굅?섎㈃???쒖꽌 ?좎?
     dedup_detected_terms = []
     seen_terms = set()
     for term in detected_terms:
@@ -504,8 +584,8 @@ def evaluate_item_with_dictionary_rules(question_text, options):
 
     if unresolved_categories:
         llm_comment = (
-            "사전 기반 문제표현이 확인되어 문항 해석 위험이 있습니다. "
-            "해당 표현을 제거하거나 구체 기준으로 바꾼 수정 문장을 제안합니다."
+            "?ъ쟾 湲곕컲 臾몄젣?쒗쁽???뺤씤?섏뼱 臾명빆 ?댁꽍 ?꾪뿕???덉뒿?덈떎. "
+            "?대떦 ?쒗쁽???쒓굅?섍굅??援ъ껜 湲곗??쇰줈 諛붽씔 ?섏젙 臾몄옣???쒖븞?⑸땲??"
         )
         suggested_rewrite = _rewrite_by_dictionary_rules(
             question_text=question,
@@ -514,9 +594,9 @@ def evaluate_item_with_dictionary_rules(question_text, options):
         )
     else:
         if dedup_detected_terms:
-            llm_comment = "사전 표현은 포함되어 있으나 보기가 의미 기준을 충분히 고정해 해석 위험이 완화되었습니다."
+            llm_comment = "?ъ쟾 ?쒗쁽? ?ы븿?섏뼱 ?덉쑝??蹂닿린媛 ?섎? 湲곗???異⑸텇??怨좎젙???댁꽍 ?꾪뿕???꾪솕?섏뿀?듬땲??"
         else:
-            llm_comment = "사전에 정의한 문제표현이 문항에서 확인되지 않았습니다."
+            llm_comment = "?ъ쟾???뺤쓽??臾몄젣?쒗쁽??臾명빆?먯꽌 ?뺤씤?섏? ?딆븯?듬땲??"
         suggested_rewrite = ""
 
     return {
@@ -527,9 +607,9 @@ def evaluate_item_with_dictionary_rules(question_text, options):
         "option_recovery": {
             "applied": bool(ambiguity_resolved_by_options and "ambiguous_time" not in unresolved_categories),
             "reason": (
-                "보기의 빈도/시간 기준이 구체적이라 모호어 위험이 완화되었습니다."
+                "蹂닿린??鍮덈룄/?쒓컙 湲곗???援ъ껜?곸씠??紐⑦샇???꾪뿕???꾪솕?섏뿀?듬땲??"
                 if ambiguity_resolved_by_options
-                else "보기에 구체 빈도/시간 기준이 부족해 모호어 위험이 남아 있습니다."
+                else "蹂닿린??援ъ껜 鍮덈룄/?쒓컙 湲곗???遺議깊빐 紐⑦샇???꾪뿕???⑥븘 ?덉뒿?덈떎."
             ),
         },
         "llm_comment": llm_comment,
