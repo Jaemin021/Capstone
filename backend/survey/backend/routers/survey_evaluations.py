@@ -134,6 +134,13 @@ def _parse_quality_eval_retry_delay_ms():
     return max(0, min(parsed, 5000))
 
 
+def _normalize_item_order(value, fallback=0):
+    try:
+        return int(value)
+    except Exception:
+        return fallback
+
+
 def _default_quality_result_from_rules():
     return {
         "problem_categories": [],
@@ -201,6 +208,8 @@ def _evaluate_single_quality_item(survey_id: str, item_snapshot: dict):
     if not has_problem:
         suggested_rewrite = ""
 
+    item_order = _normalize_item_order(item_snapshot.get("item_order"), fallback=0)
+
     eval_row = {
         "survey_id": survey_id,
         "item_id": item_snapshot["item_id"],
@@ -213,7 +222,7 @@ def _evaluate_single_quality_item(survey_id: str, item_snapshot: dict):
     }
     result_row = {
         "item_id": item_snapshot["item_id"],
-        "item_order": item_snapshot["item_order"],
+        "item_order": item_order,
         "question_text": question_text,
         "status": status,
         "has_problem": has_problem,
@@ -227,13 +236,13 @@ def _evaluate_single_quality_item(survey_id: str, item_snapshot: dict):
     if llm_error or recovered_error:
         debug_error = {
             "item_id": item_snapshot["item_id"],
-            "item_order": item_snapshot["item_order"],
+            "item_order": item_order,
             "error": llm_error or recovered_error,
             "recovered": bool(recovered_error),
         }
 
     return {
-        "item_order": item_snapshot["item_order"],
+        "item_order": item_order,
         "result_row": result_row,
         "eval_row": eval_row,
         "debug_error": debug_error,
@@ -258,7 +267,7 @@ def _evaluate_quality_without_long_db_lock(survey_id: str):
 
             item_snapshots.append({
                 "item_id": item.item_id,
-                "item_order": item.item_order,
+                "item_order": _normalize_item_order(item.item_order, fallback=0),
                 "question_text": item.question_text,
                 "option_texts": [opt.option_label for opt in options],
             })
@@ -274,13 +283,50 @@ def _evaluate_quality_without_long_db_lock(survey_id: str):
     worker_results = []
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [
-            executor.submit(_evaluate_single_quality_item, survey_id, item_snapshot)
+        future_pairs = [
+            (
+                executor.submit(_evaluate_single_quality_item, survey_id, item_snapshot),
+                item_snapshot,
+            )
             for item_snapshot in item_snapshots
         ]
 
-        for future in futures:
-            worker_results.append(future.result())
+        for future, item_snapshot in future_pairs:
+            try:
+                worker_results.append(future.result())
+            except Exception as error:
+                item_order = _normalize_item_order(item_snapshot.get("item_order"), fallback=0)
+                worker_results.append({
+                    "item_order": item_order,
+                    "result_row": {
+                        "item_id": item_snapshot["item_id"],
+                        "item_order": item_order,
+                        "question_text": item_snapshot.get("question_text", ""),
+                        "status": "error",
+                        "has_problem": False,
+                        "problem_categories": [],
+                        "detected_terms": [],
+                        "llm_comment": None,
+                        "suggested_rewrite": "",
+                        "llm_error": repr(error),
+                    },
+                    "eval_row": {
+                        "survey_id": survey_id,
+                        "item_id": item_snapshot["item_id"],
+                        "quality_score": None,
+                        "problem_categories": [],
+                        "detected_terms": [],
+                        "llm_comment": None,
+                        "suggested_rewrite": "",
+                        "created_at": now_str(),
+                    },
+                    "debug_error": {
+                        "item_id": item_snapshot["item_id"],
+                        "item_order": item_order,
+                        "error": repr(error),
+                        "recovered": False,
+                    },
+                })
 
     worker_results.sort(key=lambda row: row["item_order"])
 
