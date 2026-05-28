@@ -1,7 +1,7 @@
 ﻿# 캡스톤 실험계획서 (응답 신뢰도 + 문항 구성/CITC 근사)
 
 작성일: 2026-04-29
-저장 경로: docs/experiment-plan-2026-04-29.md
+저장 경로: docs/archive/experiment-plan.md
 
 ## 1. 프로젝트 목표
 - 문항 단위에서 CITC에 근사하는 구성 점수를 예측한다.
