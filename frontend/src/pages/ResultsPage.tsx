@@ -883,6 +883,7 @@ export function ResultsPage() {
     mutationFn: () => evaluateSurveyQuality(id),
     onSuccess: (data) => {
       console.log('[results] quality mutation response', data)
+      queryClient.setQueryData(['survey-quality', id], data)
       queryClient.invalidateQueries({ queryKey: ['survey-quality', id] })
       const llmFailureMessage = summarizeQualityLlmFailures(data.results)
 
@@ -896,6 +897,14 @@ export function ResultsPage() {
       }
 
       setQualityRowsOpen(true)
+      if ((data.results?.length ?? 0) === 0) {
+        pushToast({
+          type: 'error',
+          title: '문항 품질 평가 결과 없음',
+          description: '평가 대상(normal) 문항이 없는지 확인해주세요.',
+        })
+        return
+      }
       pushToast({ type: 'success', title: '문항 품질 평가 완료' })
     },
     onError: (error) => {
@@ -947,7 +956,7 @@ export function ResultsPage() {
   const evaluationPending =
     qualityMutation.isPending || constructMutation.isPending || statisticsMutation.isPending
 
-  const qualityResults = qualityQuery.data?.results ?? []
+  const qualityResults = qualityQuery.data?.results ?? qualityMutation.data?.results ?? []
   const constructResults = constructQuery.data?.results ?? []
   const surveyItems = surveyQuery.data?.items ?? []
   const statisticsItems = statisticsQuery.data?.items ?? []
